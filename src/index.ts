@@ -1,18 +1,21 @@
-/**
- * Welcome to Cloudflare Workers! This is your first worker.
- *
- * - Run `npm run dev` in your terminal to start a development server
- * - Open a browser tab at http://localhost:8787/ to see your worker in action
- * - Run `npm run deploy` to publish your worker
- *
- * Bind resources to your worker in `wrangler.jsonc`. After adding bindings, a type definition for the
- * `Env` object can be regenerated with `npm run cf-typegen`.
- *
- * Learn more at https://developers.cloudflare.com/workers/
- */
-
 export default {
-	async fetch(request, env, ctx): Promise<Response> {
-		return new Response("Hello World!");
-	},
-} satisfies ExportedHandler<Env>;
+  async fetch(request, env, ctx) {
+    if (request.method === 'POST' && new URL(request.url).pathname === '/sync') {
+      try {
+        const data = await request.json();
+        console.log("Received data from C# soft:", data);
+
+        return new Response(JSON.stringify({ 
+          status: 'success', 
+          message: 'Your data is successfully passed to stock update app!',
+          received_data: data
+        }), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      } catch (e) {
+        return new Response('Invalid JSON', { status: 400 });
+      }
+    }
+    return new Response('Not Found', { status: 404 });
+  }
+};
