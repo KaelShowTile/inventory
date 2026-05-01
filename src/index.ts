@@ -170,9 +170,9 @@ export default {
         const email = payload.email;
 
         // Check if email is in our allowlist
-        const allowedEmails = (env.ALLOWED_EMAILS || 'your-email@gmail.com').split(',').map((e: string) => e.trim());
-        if (!allowedEmails.includes(email)) {
-           return new Response('Access Denied: Email not authorized.', { status: 403 });
+        const allowedEmails = (env.ALLOWED_EMAILS || 'your-email@gmail.com').split(',').map((e: string) => e.trim().toLowerCase());
+        if (!allowedEmails.includes(email.toLowerCase())) {
+           return new Response(`Access Denied: Email not authorized. (Got: ${email})`, { status: 403 });
         }
 
         // Create a signed session cookie
