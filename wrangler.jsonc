@@ -13,6 +13,13 @@
 	"upload_source_maps": true,
 	"compatibility_flags": [
 		"nodejs_compat"
+	],
+	"d1_databases": [
+		{
+			"binding": "tile_db",
+			"database_name": "tile-db",
+			"database_id": "18922e08-92c2-4e1f-88d5-778dff4554b2"
+		}
 	]
 	/**
 	 * Smart Placement
