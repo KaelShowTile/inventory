@@ -16,3 +16,8 @@ CREATE TABLE products (
     gto_product_name TEXT,
     gto_product_url TEXT
 );
+
+CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT
+);
