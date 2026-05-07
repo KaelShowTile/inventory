@@ -557,8 +557,8 @@ export default {
 
         // Sync CHT
         if (settings.cht_endpoint && settings.cht_api_key) {
-          // Automatically sum stock for duplicate IDs using SQL GROUP BY
-          const { results: chtData } = await env.tile_db.prepare("SELECT cht_product_id as id, SUM(stock) as stock FROM products WHERE cht_product_id IS NOT NULL GROUP BY cht_product_id").all();
+          // Use MAX instead of SUM to get the highest batch stock
+          const { results: chtData } = await env.tile_db.prepare("SELECT cht_product_id as id, MAX(stock) as stock FROM products WHERE cht_product_id IS NOT NULL GROUP BY cht_product_id").all();
           if (chtData.length > 0) {
             const res = await fetch(settings.cht_endpoint, {
               method: 'POST',
@@ -576,7 +576,7 @@ export default {
 
         // Sync GTO
         if (settings.gto_endpoint && settings.gto_api_key) {
-          const { results: gtoData } = await env.tile_db.prepare("SELECT gto_product_id as id, SUM(stock) as stock FROM products WHERE gto_product_id IS NOT NULL GROUP BY gto_product_id").all();
+          const { results: gtoData } = await env.tile_db.prepare("SELECT gto_product_id as id, MAX(stock) as stock FROM products WHERE gto_product_id IS NOT NULL GROUP BY gto_product_id").all();
           if (gtoData.length > 0) {
             const res = await fetch(settings.gto_endpoint, {
               method: 'POST',
@@ -624,6 +624,13 @@ export default {
           items = [items];
         }
 
+        // 1. Snapshot MAX stock BEFORE update
+        const { results: preCht } = await env.tile_db.prepare("SELECT cht_product_id as id, MAX(stock) as max_stock FROM products WHERE cht_product_id IS NOT NULL GROUP BY cht_product_id").all();
+        const preChtMap = new Map(preCht.map((r: any) => [r.id, r.max_stock]));
+        
+        const { results: preGto } = await env.tile_db.prepare("SELECT gto_product_id as id, MAX(stock) as max_stock FROM products WHERE gto_product_id IS NOT NULL GROUP BY gto_product_id").all();
+        const preGtoMap = new Map(preGto.map((r: any) => [r.id, r.max_stock]));
+
         // Prepare statement using UPSERT to insert or update existing products
         const stmt = env.tile_db.prepare(`
           INSERT INTO products (sku, name, stock, rrp, mpb, pcs, brp, updated_at)
@@ -654,10 +661,57 @@ export default {
           await env.tile_db.batch(batchStatements);
         }
 
+        // 2. Snapshot MAX stock AFTER update
+        const { results: postCht } = await env.tile_db.prepare("SELECT cht_product_id as id, MAX(stock) as max_stock FROM products WHERE cht_product_id IS NOT NULL GROUP BY cht_product_id").all();
+        const postChtMap = new Map(postCht.map((r: any) => [r.id, r.max_stock]));
+        
+        const { results: postGto } = await env.tile_db.prepare("SELECT gto_product_id as id, MAX(stock) as max_stock FROM products WHERE gto_product_id IS NOT NULL GROUP BY gto_product_id").all();
+        const postGtoMap = new Map(postGto.map((r: any) => [r.id, r.max_stock]));
+
+        // 3. Compare and find what actually changed
+        const chtUpdates: any[] = [];
+        for (const [id, newMax] of postChtMap.entries()) {
+            if (preChtMap.get(id) !== newMax) {
+                chtUpdates.push({ id, stock: newMax });
+            }
+        }
+        
+        const gtoUpdates: any[] = [];
+        for (const [id, newMax] of postGtoMap.entries()) {
+            if (preGtoMap.get(id) !== newMax) {
+                gtoUpdates.push({ id, stock: newMax });
+            }
+        }
+
+        // 4. Auto-push to websites if there are changes
+        let pushResults = { cht_pushed: chtUpdates.length, gto_pushed: gtoUpdates.length };
+        if (chtUpdates.length > 0 || gtoUpdates.length > 0) {
+            const { results: settingsRows } = await env.tile_db.prepare("SELECT * FROM settings").all();
+            const settings: any = {};
+            settingsRows.forEach((r: any) => settings[r.key] = r.value);
+
+            // Use ctx.waitUntil so the worker responds to C# instantly while sending HTTP requests to WP in the background
+            if (chtUpdates.length > 0 && settings.cht_endpoint && settings.cht_api_key) {
+                ctx.waitUntil(fetch(settings.cht_endpoint, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${settings.cht_api_key}` },
+                    body: JSON.stringify(chtUpdates)
+                }).catch(e => console.error("Auto CHT Push Error:", e)));
+            }
+
+            if (gtoUpdates.length > 0 && settings.gto_endpoint && settings.gto_api_key) {
+                ctx.waitUntil(fetch(settings.gto_endpoint, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${settings.gto_api_key}` },
+                    body: JSON.stringify(gtoUpdates)
+                }).catch(e => console.error("Auto GTO Push Error:", e)));
+            }
+        }
+
         return new Response(JSON.stringify({ 
           status: 'success', 
           message: 'Data successfully synced to the D1 database!',
-          received_data: data
+          pushed_to_websites: pushResults
         }), { headers: { 'Content-Type': 'application/json' } });
       } catch (e: any) {
         return new Response(JSON.stringify({ error: 'Bad Request', details: e.message }), { status: 400 });
