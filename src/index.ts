@@ -11,19 +11,22 @@ const ADMIN_HTML = `
 </head>
 <body>
     <nav class="navbar navbar-expand-lg navbar-dark bg-dark mb-4">
-        <div class="container-fluid" style="padding: 0 20px;">
-            <a class="navbar-brand" href="/admin">Inventory Admin</a>
+        <div class="container-fluid" style="padding: 3px 20px 0;">
+            <a class="navbar-brand" style="margin-right:50px;margin-bottom: 3px;" href="/admin">ST Inventory Admin</a>
             <div class="collapse navbar-collapse">
                 <ul class="navbar-nav me-auto">
                     <li class="nav-item"><a class="nav-link active" href="/admin">Products</a></li>
                     <li class="nav-item"><a class="nav-link" href="/admin/settings">Settings</a></li>
                 </ul>
+                <ul class="navbar-nav">
+                    <li class="nav-item"><a class="btn btn-danger" href="/logout">Logout</a></li>
+                </ul>
             </div>
         </div>
     </nav>
     <div class="container-fluid">
-        <div class="d-flex justify-content-between align-items-center mb-3">
-            <h2>Stock Management</h2>
+        <div class="d-flex justify-content-between align-items-center mb-3" style="margin-bottom: 30px !important; padding-bottom: 8px; border-bottom: 2px dashed #eee;">
+            <h2 style="margin-bottom: 0;">SKU MAPPING</h2>
             <button id="syncWebsitesBtn" class="btn btn-success">Sync Inventory to Websites</button>
         </div>
         <table id="productsTable" class="table table-striped" style="width:100%">
@@ -113,7 +116,8 @@ const ADMIN_HTML = `
                                    'data-cht-id="'+(row.cht_product_id || '')+'" ' +
                                    'data-cht-name="'+(row.cht_product_name || '')+'" ' +
                                    'data-gto-id="'+(row.gto_product_id || '')+'" ' +
-                                   'data-gto-name="'+(row.gto_product_name || '')+'">Edit</button>';
+                                   'data-gto-name="'+(row.gto_product_name || '')+'">Edit</button>' +
+                                   '<button class="btn btn-sm btn-danger delete-btn ms-1" data-sku="'+row.sku+'">Delete</button>';
                         }
                     }
                 ]
@@ -224,6 +228,27 @@ const ADMIN_HTML = `
                 });
             });
 
+            // Delete Single Product
+            $('#productsTable').on('click', '.delete-btn', function() {
+                const sku = $(this).data('sku');
+                if (confirm('Are you sure you want to delete SKU: ' + sku + '?')) {
+                    const btn = $(this);
+                    btn.prop('disabled', true).text('...');
+                    $.ajax({
+                        url: '/api/products',
+                        type: 'DELETE',
+                        contentType: 'application/json',
+                        data: JSON.stringify({ sku: sku }),
+                        success: function() {
+                            table.ajax.reload(null, false);
+                        },
+                        error: function(err) {
+                            alert('Error deleting product: ' + (err.responseJSON ? err.responseJSON.error : 'Unknown error'));
+                            btn.prop('disabled', false).text('Delete');
+                        }
+                    });
+                }
+            });
         });
     </script>
 </body>
@@ -237,26 +262,29 @@ const SETTINGS_HTML = `
     <meta charset="UTF-8">
     <title>Settings - Inventory Mapping</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.0/css/bootstrap.min.css">
-    <style> body { background-color: #f8f9fa; } .container-fluid { padding: 20px; } .settings-container { max-width: 800px; margin: 0 auto; } </style>
+    <style> body { background-color: #f8f9fa; } .container-fluid { padding: 20px; } .settings-container { max-width: 800px; margin: 0 auto; } .form-label{font-size: 0.85rem; margin-bottom: 2px; color: #999; letter-spacing: 0.2px;} input.form-control{background-color: #eee;} input.form-control:focus{box-shadow: 0 0 0 1px rgba(13, 110, 253, .25);}</style>
 </head>
 <body>
     <nav class="navbar navbar-expand-lg navbar-dark bg-dark mb-4">
-        <div class="container-fluid" style="padding: 0 20px;">
-            <a class="navbar-brand" href="/admin">Inventory Admin</a>
+        <div class="container-fluid" style="padding: 3px 20px 0;">
+            <a class="navbar-brand" style="margin-right:50px;margin-bottom: 3px;" href="/admin">ST Inventory Admin</a>
             <div class="collapse navbar-collapse">
                 <ul class="navbar-nav me-auto">
                     <li class="nav-item"><a class="nav-link" href="/admin">Products</a></li>
                     <li class="nav-item"><a class="nav-link active" href="/admin/settings">Settings</a></li>
+                </ul>
+                <ul class="navbar-nav">
+                    <li class="nav-item"><a class="btn btn-danger" href="/logout">Logout</a></li>
                 </ul>
             </div>
         </div>
     </nav>
 
     <div class="settings-container bg-white p-4 rounded shadow-sm">
-        <h2 class="mb-4">System Settings</h2>
+        <h2 class="mb-4" style="margin-bottom: 30px !important; padding-bottom: 15px; border-bottom: 2px dashed #eee;">System Settings</h2>
         <div id="alertBox" class="alert d-none"></div>
         <form id="settingsForm">
-            <h5 class="mt-4 border-bottom pb-2">CHT Website API</h5>
+            <h5 class="mt-4 pb-2">CHT Website API</h5>
             <div class="row mb-3">
                 <div class="col-md-6">
                     <label class="form-label">Endpoint URL</label>
@@ -272,7 +300,7 @@ const SETTINGS_HTML = `
                 </div>
             </div>
 
-            <h5 class="mt-4 border-bottom pb-2">GTO Website API</h5>
+            <h5 class="mt-4 pb-2">GTO Website API</h5>
             <div class="row mb-3">
                 <div class="col-md-6">
                     <label class="form-label">Endpoint URL</label>
@@ -290,9 +318,32 @@ const SETTINGS_HTML = `
 
             <button type="submit" class="btn btn-primary mt-3" id="saveBtn">Save Settings</button>
         </form>
+
+        <h5 class="mt-5 border-bottom pb-2">Export / Import Products</h5>
+        <div class="row mb-3 align-items-center">
+            <div class="col-md-8">
+                <p class="text-muted mb-0"><small>Export all products to CSV, or import a CSV to bulk update/add products. (Website inventory will NOT be synced automatically during import)</small></p>
+            </div>
+            <div class="col-md-4 text-end">
+                <button type="button" class="btn btn-secondary me-2" id="exportCsvBtn">Export CSV</button>
+                <button type="button" class="btn btn-primary" id="importCsvBtn">Import CSV</button>
+                <input type="file" id="csvFileInput" accept=".csv" style="display: none;">
+            </div>
+        </div>
+
+        <h5 class="mt-5 border-bottom pb-2 text-danger">Delete All Records?</h5>
+        <div class="row mb-3 align-items-center">
+            <div class="col-md-8">
+                <p class="text-muted mb-0"><small>This will permanently remove all product records from the database. This action cannot be undone.</small></p>
+            </div>
+            <div class="col-md-4 text-end">
+                <button type="button" class="btn btn-danger" id="deleteAllBtn">Delete All</button>
+            </div>
+        </div>
     </div>
 
     <script src="https://code.jquery.com/jquery-3.7.0.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
     <script>
         $(document).ready(function() {
             $.get('/api/settings', function(res) {
@@ -306,6 +357,87 @@ const SETTINGS_HTML = `
                 const formData = {};
                 $(this).serializeArray().forEach(item => formData[item.name] = item.value);
                 $.ajax({ url: '/api/settings', type: 'POST', contentType: 'application/json', data: JSON.stringify(formData), success: function() { $('#alertBox').removeClass('d-none alert-danger').addClass('alert-success').text('Settings saved successfully!'); setTimeout(() => $('#alertBox').addClass('d-none'), 3000); }, error: function() { $('#alertBox').removeClass('d-none alert-success').addClass('alert-danger').text('Failed to save settings.'); }, complete: function() { $('#saveBtn').prop('disabled', false).text('Save Settings'); } });
+            });
+
+            // Export CSV
+            $('#exportCsvBtn').on('click', function() {
+                const btn = $(this);
+                btn.prop('disabled', true).text('Exporting...');
+                $.get('/api/products', function(res) {
+                    if(!res.data || res.data.length === 0) { alert('No products to export.'); btn.prop('disabled', false).text('Export CSV'); return; }
+                    const fields = ['sku', 'name', 'stock', 'rrp', 'mpb', 'pcs', 'brp', 'updated_at', 'cht_product_id', 'cht_product_name', 'gto_product_id', 'gto_product_name'];
+                    const csv = Papa.unparse({
+                        fields: ['SKU', 'Name', 'Stock', 'RRP', 'MPB', 'PCS', 'BRP', 'Update Date', 'CHT Product ID', 'CHT Product Name', 'GTO Product ID', 'GTO Product Name'],
+                        data: res.data.map(row => fields.map(f => row[f]))
+                    });
+                    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+                    const link = document.createElement('a');
+                    link.href = URL.createObjectURL(blob);
+                    link.download = 'products_export_' + new Date().toISOString().slice(0,10) + '.csv';
+                    link.click();
+                    btn.prop('disabled', false).text('Export CSV');
+                });
+            });
+
+            // Import CSV
+            $('#importCsvBtn').on('click', function() { $('#csvFileInput').click(); });
+            $('#csvFileInput').on('change', function(e) {
+                const file = e.target.files[0];
+                if(!file) return;
+                $('#importCsvBtn').prop('disabled', true).text('Parsing...');
+                Papa.parse(file, {
+                    header: true, skipEmptyLines: true,
+                    complete: function(results) {
+                        const data = results.data.map(row => ({
+                            sku: row['SKU'], name: row['Name'],
+                            stock: row['Stock'] ? parseInt(row['Stock']) : null,
+                            rrp: row['RRP'] ? parseFloat(row['RRP']) : null,
+                            mpb: row['MPB'] ? parseFloat(row['MPB']) : null,
+                            pcs: row['PCS'] ? parseInt(row['PCS']) : null,
+                            brp: row['BRP'] ? parseFloat(row['BRP']) : null,
+                            cht_product_id: row['CHT Product ID'] ? parseInt(row['CHT Product ID']) : null,
+                            gto_product_id: row['GTO Product ID'] ? parseInt(row['GTO Product ID']) : null
+                        })).filter(item => item.sku); // SKU is mandatory
+
+                        if(data.length === 0) { alert('No valid rows found in CSV.'); $('#importCsvBtn').prop('disabled', false).text('Import CSV'); $('#csvFileInput').val(''); return; }
+                        $('#importCsvBtn').text('Importing ' + data.length + ' rows...');
+                        
+                        $.ajax({
+                            url: '/api/products/import', type: 'POST', contentType: 'application/json', data: JSON.stringify(data),
+                            success: function(res) {
+                                $('#alertBox').removeClass('d-none alert-danger').addClass('alert-success').text('Successfully imported ' + res.imported + ' products! Note: Website inventory was NOT synced automatically. Go to Products page and click Sync if needed.');
+                                window.scrollTo(0,0);
+                            },
+                            error: function(err) {
+                                $('#alertBox').removeClass('d-none alert-success').addClass('alert-danger').text('Failed to import: ' + (err.responseJSON ? err.responseJSON.error : 'Unknown error'));
+                                window.scrollTo(0,0);
+                            },
+                            complete: function() { $('#importCsvBtn').prop('disabled', false).text('Import CSV'); $('#csvFileInput').val(''); }
+                        });
+                    }
+                });
+            });
+
+            // Delete All Products
+            $('#deleteAllBtn').on('click', function() {
+                if (confirm('Are you ABSOLUTELY sure you want to DELETE ALL product records? This action cannot be undone!')) {
+                    const btn = $(this);
+                    btn.prop('disabled', true).text('Deleting...');
+                    $.ajax({
+                        url: '/api/products/all',
+                        type: 'DELETE',
+                        success: function() {
+                            $('#alertBox').removeClass('d-none alert-danger').addClass('alert-success').text('All product records deleted successfully!');
+                            setTimeout(() => $('#alertBox').addClass('d-none'), 3000);
+                        },
+                        error: function(err) {
+                            $('#alertBox').removeClass('d-none alert-success').addClass('alert-danger').text('Failed to delete records.');
+                        },
+                        complete: function() {
+                            btn.prop('disabled', false).text('Delete All');
+                        }
+                    });
+                }
             });
         });
     </script>
@@ -353,7 +485,7 @@ export default {
     const url = new URL(request.url);
 
     // 1. Auth Check for protected routes
-    const protectedRoutes = ['/admin', '/admin/settings', '/api/products', '/api/settings', '/api/mapping/search', '/api/products/map', '/api/sync-websites'];
+    const protectedRoutes = ['/admin', '/admin/settings', '/api/products', '/api/products/import', '/api/products/all', '/api/settings', '/api/mapping/search', '/api/products/map', '/api/sync-websites'];
     if (protectedRoutes.includes(url.pathname)) {
       const cookie = getCookie(request, 'admin_session');
       const secret = env.COOKIE_SECRET || 'dev-secret-key-change-me';
@@ -442,6 +574,16 @@ export default {
       }
     }
 
+    if (request.method === 'GET' && url.pathname === '/logout') {
+      return new Response('Redirecting...', {
+        status: 302,
+        headers: {
+          'Location': '/login',
+          'Set-Cookie': 'admin_session=; HttpOnly; Secure; Path=/; Max-Age=0'
+        }
+      });
+    }
+
     if (request.method === 'GET' && url.pathname === '/admin') {
       return new Response(ADMIN_HTML, {
         headers: { 'Content-Type': 'text/html;charset=UTF-8' }
@@ -453,6 +595,133 @@ export default {
       return new Response(JSON.stringify({ data: results }), {
         headers: { 'Content-Type': 'application/json' }
       });
+    }
+
+    if (request.method === 'DELETE' && url.pathname === '/api/products') {
+      try {
+        const body: any = await request.json();
+        if (!body.sku) return new Response(JSON.stringify({ error: 'SKU required' }), { status: 400 });
+
+        // 1. Snapshot MAX stock BEFORE delete
+        const { results: preCht } = await env.tile_db.prepare("SELECT cht_product_id as id, MAX(stock) as max_stock FROM products WHERE cht_product_id IS NOT NULL GROUP BY cht_product_id").all();
+        const preChtMap = new Map(preCht.map((r: any) => [r.id, r.max_stock]));
+        
+        const { results: preGto } = await env.tile_db.prepare("SELECT gto_product_id as id, MAX(stock) as max_stock FROM products WHERE gto_product_id IS NOT NULL GROUP BY gto_product_id").all();
+        const preGtoMap = new Map(preGto.map((r: any) => [r.id, r.max_stock]));
+
+        // 2. Perform delete
+        await env.tile_db.prepare("DELETE FROM products WHERE sku = ?").bind(body.sku).run();
+
+        // 3. Snapshot MAX stock AFTER delete
+        const { results: postCht } = await env.tile_db.prepare("SELECT cht_product_id as id, MAX(stock) as max_stock FROM products WHERE cht_product_id IS NOT NULL GROUP BY cht_product_id").all();
+        const postChtMap = new Map(postCht.map((r: any) => [r.id, r.max_stock]));
+        
+        const { results: postGto } = await env.tile_db.prepare("SELECT gto_product_id as id, MAX(stock) as max_stock FROM products WHERE gto_product_id IS NOT NULL GROUP BY gto_product_id").all();
+        const postGtoMap = new Map(postGto.map((r: any) => [r.id, r.max_stock]));
+
+        // 4. Compare and find what actually changed (Iterate over PRE map because deletion might remove the ID entirely)
+        const chtUpdates: any[] = [];
+        for (const [id, oldMax] of preChtMap.entries()) {
+            const newMax = postChtMap.get(id) ?? 0; // Default to 0 if the last product mapping was deleted
+            if (oldMax !== newMax) {
+                chtUpdates.push({ id, stock: newMax });
+            }
+        }
+        
+        const gtoUpdates: any[] = [];
+        for (const [id, oldMax] of preGtoMap.entries()) {
+            const newMax = postGtoMap.get(id) ?? 0; // Default to 0 if the last product mapping was deleted
+            if (oldMax !== newMax) {
+                gtoUpdates.push({ id, stock: newMax });
+            }
+        }
+
+        // 5. Auto-push to websites if there are changes
+        if (chtUpdates.length > 0 || gtoUpdates.length > 0) {
+            const { results: settingsRows } = await env.tile_db.prepare("SELECT * FROM settings").all();
+            const settings: any = {};
+            settingsRows.forEach((r: any) => settings[r.key] = r.value);
+
+            if (chtUpdates.length > 0 && settings.cht_endpoint && settings.cht_api_key) {
+                ctx.waitUntil(fetch(settings.cht_endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${settings.cht_api_key}` }, body: JSON.stringify(chtUpdates) }).catch(e => console.error("Auto CHT Push Error:", e)));
+            }
+            if (gtoUpdates.length > 0 && settings.gto_endpoint && settings.gto_api_key) {
+                ctx.waitUntil(fetch(settings.gto_endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${settings.gto_api_key}` }, body: JSON.stringify(gtoUpdates) }).catch(e => console.error("Auto GTO Push Error:", e)));
+            }
+        }
+
+        return new Response(JSON.stringify({ status: 'success' }), { headers: { 'Content-Type': 'application/json' } });
+      } catch (e: any) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+      }
+    }
+
+    if (request.method === 'DELETE' && url.pathname === '/api/products/all') {
+      try {
+        await env.tile_db.prepare("DELETE FROM products").run();
+        return new Response(JSON.stringify({ status: 'success' }), { headers: { 'Content-Type': 'application/json' } });
+      } catch (e: any) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+      }
+    }
+
+    if (request.method === 'POST' && url.pathname === '/api/products/import') {
+      try {
+        const items: any[] = await request.json();
+        if (!Array.isArray(items) || items.length === 0) return new Response(JSON.stringify({ error: 'No data to import' }), { status: 400 });
+
+        // Fetch JSONs to resolve real names based purely on ID
+        const { results: settingsRows } = await env.tile_db.prepare("SELECT * FROM settings").all();
+        const settings: any = {};
+        settingsRows.forEach((r: any) => settings[r.key] = r.value);
+
+        const resolveNames = async (siteKey: string) => {
+          const jsonUrl = settings[siteKey];
+          if (!jsonUrl) return new Map();
+          try {
+            const cacheKey = new Request(jsonUrl);
+            let response = await caches.default.match(cacheKey);
+            if (!response) {
+              response = await fetch(jsonUrl);
+              if (response.ok) {
+                const responseToCache = new Response(response.body, response);
+                responseToCache.headers.append('Cache-Control', 's-maxage=3600');
+                ctx.waitUntil(caches.default.put(cacheKey, responseToCache));
+              } else return new Map();
+            }
+            const products = await response.clone().json();
+            return new Map(products.map((p: any) => [Number(p.id), p.name]));
+          } catch(e) { return new Map(); }
+        };
+
+        const chtMap = await resolveNames('cht_products_json_url');
+        const gtoMap = await resolveNames('gto_products_json_url');
+
+        const stmt = env.tile_db.prepare(`
+          INSERT INTO products (sku, name, stock, rrp, mpb, pcs, brp, cht_product_id, cht_product_name, gto_product_id, gto_product_name, updated_at)
+          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, CURRENT_TIMESTAMP)
+          ON CONFLICT(sku) DO UPDATE SET
+            name = excluded.name, stock = excluded.stock, rrp = excluded.rrp, mpb = excluded.mpb, pcs = excluded.pcs, brp = excluded.brp,
+            cht_product_id = excluded.cht_product_id, cht_product_name = excluded.cht_product_name,
+            gto_product_id = excluded.gto_product_id, gto_product_name = excluded.gto_product_name,
+            updated_at = CURRENT_TIMESTAMP
+        `);
+
+        const batchStatements = items.map((p: any) => {
+           const chtName = p.cht_product_id ? (chtMap.get(p.cht_product_id) || null) : null;
+           const gtoName = p.gto_product_id ? (gtoMap.get(p.gto_product_id) || null) : null;
+           return stmt.bind(p.sku, p.name || null, p.stock ?? null, p.rrp ?? null, p.mpb ?? null, p.pcs ?? null, p.brp ?? null, p.cht_product_id ?? null, chtName, p.gto_product_id ?? null, gtoName);
+        });
+
+        // Execute in chunks to respect database limits
+        for (let i = 0; i < batchStatements.length; i += 100) {
+          await env.tile_db.batch(batchStatements.slice(i, i + 100));
+        }
+
+        return new Response(JSON.stringify({ status: 'success', imported: items.length }), { headers: { 'Content-Type': 'application/json' } });
+      } catch (e: any) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+      }
     }
 
     if (request.method === 'GET' && url.pathname === '/admin/settings') {
@@ -503,7 +772,7 @@ export default {
         if (!setting || !setting.value) return new Response(JSON.stringify({ error: 'JSON URL not configured in settings' }), { status: 400 });
 
         const jsonUrl = setting.value as string;
-        const cacheKey = new Request(jsonUrl, request);
+        const cacheKey = new Request(jsonUrl);
         const cache = caches.default;
         
         let response = await cache.match(cacheKey);
@@ -529,6 +798,15 @@ export default {
     if (request.method === 'POST' && url.pathname === '/api/products/map') {
       try {
         const body: any = await request.json();
+
+        // 1. Snapshot MAX stock BEFORE map update
+        const { results: preCht } = await env.tile_db.prepare("SELECT cht_product_id as id, MAX(stock) as max_stock FROM products WHERE cht_product_id IS NOT NULL GROUP BY cht_product_id").all();
+        const preChtMap = new Map(preCht.map((r: any) => [r.id, r.max_stock]));
+        
+        const { results: preGto } = await env.tile_db.prepare("SELECT gto_product_id as id, MAX(stock) as max_stock FROM products WHERE gto_product_id IS NOT NULL GROUP BY gto_product_id").all();
+        const preGtoMap = new Map(preGto.map((r: any) => [r.id, r.max_stock]));
+
+        // 2. Perform map update
         await env.tile_db.prepare(`
           UPDATE products 
           SET cht_product_id = ?1, cht_product_name = ?2, 
@@ -540,6 +818,45 @@ export default {
           body.gto_product_id, body.gto_product_name,
           body.sku
         ).run();
+
+        // 3. Snapshot MAX stock AFTER map update
+        const { results: postCht } = await env.tile_db.prepare("SELECT cht_product_id as id, MAX(stock) as max_stock FROM products WHERE cht_product_id IS NOT NULL GROUP BY cht_product_id").all();
+        const postChtMap = new Map(postCht.map((r: any) => [r.id, r.max_stock]));
+        
+        const { results: postGto } = await env.tile_db.prepare("SELECT gto_product_id as id, MAX(stock) as max_stock FROM products WHERE gto_product_id IS NOT NULL GROUP BY gto_product_id").all();
+        const postGtoMap = new Map(postGto.map((r: any) => [r.id, r.max_stock]));
+
+        // 4. Compare and find what actually changed (Check union of both PRE and POST map keys to catch new maps, changed maps, and un-maps)
+        const chtUpdates: any[] = [];
+        const allChtIds = new Set([...preChtMap.keys(), ...postChtMap.keys()]);
+        for (const id of allChtIds) {
+            const oldMax = preChtMap.get(id) ?? 0;
+            const newMax = postChtMap.get(id) ?? 0;
+            if (oldMax !== newMax) { chtUpdates.push({ id, stock: newMax }); }
+        }
+        
+        const gtoUpdates: any[] = [];
+        const allGtoIds = new Set([...preGtoMap.keys(), ...postGtoMap.keys()]);
+        for (const id of allGtoIds) {
+            const oldMax = preGtoMap.get(id) ?? 0;
+            const newMax = postGtoMap.get(id) ?? 0;
+            if (oldMax !== newMax) { gtoUpdates.push({ id, stock: newMax }); }
+        }
+
+        // 5. Auto-push to websites if there are changes
+        if (chtUpdates.length > 0 || gtoUpdates.length > 0) {
+            const { results: settingsRows } = await env.tile_db.prepare("SELECT * FROM settings").all();
+            const settings: any = {};
+            settingsRows.forEach((r: any) => settings[r.key] = r.value);
+
+            if (chtUpdates.length > 0 && settings.cht_endpoint && settings.cht_api_key) {
+                ctx.waitUntil(fetch(settings.cht_endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${settings.cht_api_key}` }, body: JSON.stringify(chtUpdates) }).catch(e => console.error("Auto CHT Push Error:", e)));
+            }
+            if (gtoUpdates.length > 0 && settings.gto_endpoint && settings.gto_api_key) {
+                ctx.waitUntil(fetch(settings.gto_endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${settings.gto_api_key}` }, body: JSON.stringify(gtoUpdates) }).catch(e => console.error("Auto GTO Push Error:", e)));
+            }
+        }
+
         return new Response(JSON.stringify({ status: 'success' }), { headers: { 'Content-Type': 'application/json' } });
       } catch (e: any) {
         return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: { 'Content-Type': 'application/json' } });
