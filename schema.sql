@@ -9,6 +9,8 @@ CREATE TABLE products (
     mpb REAL,
     pcs INTEGER,
     brp INTEGER,
+    backorder INTEGER DEFAULT 0,
+    force_in_stock INTEGER DEFAULT 0,
     cht_product_id TEXT,
     cht_product_name TEXT,
     cht_product_url TEXT,
