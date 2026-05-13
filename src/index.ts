@@ -504,6 +504,31 @@ function getCookie(request: Request, name: string) {
   return match ? match[2] : null;
 }
 
+async function pushInChunks(endpoint: string, apiKey: string, payload: any[], chunkSize: number = 100) {
+    let successCount = 0;
+    let hasError = false;
+    for (let i = 0; i < payload.length; i += chunkSize) {
+        const chunk = payload.slice(i, i + chunkSize);
+        try {
+            const res = await fetch(endpoint, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+                body: JSON.stringify(chunk)
+            });
+            if (res.ok) {
+                successCount += chunk.length;
+            } else {
+                hasError = true;
+                console.error(`Sync chunk failed: ${res.status} ${res.statusText} at ${endpoint}`);
+            }
+        } catch (e) {
+            hasError = true;
+            console.error(`Sync chunk error:`, e);
+        }
+    }
+    return { ok: successCount > 0, updated: successCount, hasError };
+}
+
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
@@ -671,10 +696,10 @@ export default {
             settingsRows.forEach((r: any) => settings[r.key] = r.value);
 
             if (chtUpdates.length > 0 && settings.cht_endpoint && settings.cht_api_key) {
-                ctx.waitUntil(fetch(settings.cht_endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${settings.cht_api_key}` }, body: JSON.stringify(chtUpdates) }).catch(e => console.error("Auto CHT Push Error:", e)));
+                ctx.waitUntil(pushInChunks(settings.cht_endpoint, settings.cht_api_key, chtUpdates).catch(e => console.error("Auto CHT Push Error:", e)));
             }
             if (gtoUpdates.length > 0 && settings.gto_endpoint && settings.gto_api_key) {
-                ctx.waitUntil(fetch(settings.gto_endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${settings.gto_api_key}` }, body: JSON.stringify(gtoUpdates) }).catch(e => console.error("Auto GTO Push Error:", e)));
+                ctx.waitUntil(pushInChunks(settings.gto_endpoint, settings.gto_api_key, gtoUpdates).catch(e => console.error("Auto GTO Push Error:", e)));
             }
         }
 
@@ -884,10 +909,10 @@ export default {
             settingsRows.forEach((r: any) => settings[r.key] = r.value);
 
             if (chtUpdates.length > 0 && settings.cht_endpoint && settings.cht_api_key) {
-                ctx.waitUntil(fetch(settings.cht_endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${settings.cht_api_key}` }, body: JSON.stringify(chtUpdates) }).catch(e => console.error("Auto CHT Push Error:", e)));
+                ctx.waitUntil(pushInChunks(settings.cht_endpoint, settings.cht_api_key, chtUpdates).catch(e => console.error("Auto CHT Push Error:", e)));
             }
             if (gtoUpdates.length > 0 && settings.gto_endpoint && settings.gto_api_key) {
-                ctx.waitUntil(fetch(settings.gto_endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${settings.gto_api_key}` }, body: JSON.stringify(gtoUpdates) }).catch(e => console.error("Auto GTO Push Error:", e)));
+                ctx.waitUntil(pushInChunks(settings.gto_endpoint, settings.gto_api_key, gtoUpdates).catch(e => console.error("Auto GTO Push Error:", e)));
             }
         }
 
@@ -912,15 +937,8 @@ export default {
           const { results: chtData } = await env.tile_db.prepare("SELECT cht_product_id as id, MAX(stock) as stock, MAX(backorder) as backorder, MAX(force_in_stock) as force_in_stock FROM products WHERE cht_product_id IS NOT NULL GROUP BY cht_product_id").all();
           if (chtData.length > 0) {
             const payload = chtData.map((r: any) => ({ id: r.id, stock: r.stock, backorder: !!r.backorder, force_in_stock: !!r.force_in_stock }));
-            const res = await fetch(settings.cht_endpoint, {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${settings.cht_api_key}`
-              },
-              body: JSON.stringify(payload)
-            });
-            resultsObj.cht = { status: res.status, ok: res.ok, updated: chtData.length };
+            const res = await pushInChunks(settings.cht_endpoint, settings.cht_api_key, payload);
+            resultsObj.cht = { status: res.hasError ? 207 : 200, ok: res.ok, updated: res.updated };
           } else {
             resultsObj.cht = { ok: false, reason: 'No mapped products for CHT' };
           }
@@ -931,15 +949,8 @@ export default {
           const { results: gtoData } = await env.tile_db.prepare("SELECT gto_product_id as id, MAX(stock) as stock, MAX(backorder) as backorder, MAX(force_in_stock) as force_in_stock FROM products WHERE gto_product_id IS NOT NULL GROUP BY gto_product_id").all();
           if (gtoData.length > 0) {
             const payload = gtoData.map((r: any) => ({ id: r.id, stock: r.stock, backorder: !!r.backorder, force_in_stock: !!r.force_in_stock }));
-            const res = await fetch(settings.gto_endpoint, {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${settings.gto_api_key}`
-              },
-              body: JSON.stringify(payload)
-            });
-            resultsObj.gto = { status: res.status, ok: res.ok, updated: gtoData.length };
+            const res = await pushInChunks(settings.gto_endpoint, settings.gto_api_key, payload);
+            resultsObj.gto = { status: res.hasError ? 207 : 200, ok: res.ok, updated: res.updated };
           } else {
             resultsObj.gto = { ok: false, reason: 'No mapped products for GTO' };
           }
@@ -1051,19 +1062,11 @@ export default {
 
             // Use ctx.waitUntil so the worker responds to C# instantly while sending HTTP requests to WP in the background
             if (chtUpdates.length > 0 && settings.cht_endpoint && settings.cht_api_key) {
-                ctx.waitUntil(fetch(settings.cht_endpoint, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${settings.cht_api_key}` },
-                    body: JSON.stringify(chtUpdates)
-                }).catch(e => console.error("Auto CHT Push Error:", e)));
+                ctx.waitUntil(pushInChunks(settings.cht_endpoint, settings.cht_api_key, chtUpdates).catch(e => console.error("Auto CHT Push Error:", e)));
             }
 
             if (gtoUpdates.length > 0 && settings.gto_endpoint && settings.gto_api_key) {
-                ctx.waitUntil(fetch(settings.gto_endpoint, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${settings.gto_api_key}` },
-                    body: JSON.stringify(gtoUpdates)
-                }).catch(e => console.error("Auto GTO Push Error:", e)));
+                ctx.waitUntil(pushInChunks(settings.gto_endpoint, settings.gto_api_key, gtoUpdates).catch(e => console.error("Auto GTO Push Error:", e)));
             }
         }
 

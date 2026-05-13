@@ -16,7 +16,8 @@ CREATE TABLE products (
     cht_product_url TEXT,
     gto_product_id TEXT,
     gto_product_name TEXT,
-    gto_product_url TEXT
+    gto_product_url TEXT,
+    updated_at DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS settings (
