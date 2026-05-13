@@ -239,8 +239,8 @@ const ADMIN_HTML = `
                     type: 'POST',
                     success: function(res) {
                         let msg = 'Sync completed!\\n\\n';
-                        if (res.details.cht) msg += 'CHT: ' + (res.details.cht.ok ? 'Success (' + res.details.cht.updated + ' products updated)' : 'Failed or Skipped') + '\\n';
-                        if (res.details.gto) msg += 'GTO: ' + (res.details.gto.ok ? 'Success (' + res.details.gto.updated + ' products updated)' : 'Failed or Skipped');
+                        if (res.details.cht) msg += 'CHT: ' + (res.details.cht.ok ? 'Success (' + res.details.cht.updated + ' products updated)' : 'Failed: ' + (res.details.cht.error || 'Skipped')) + '\\n';
+                        if (res.details.gto) msg += 'GTO: ' + (res.details.gto.ok ? 'Success (' + res.details.gto.updated + ' products updated)' : 'Failed: ' + (res.details.gto.error || 'Skipped'));
                         alert(msg);
                     },
                     error: function(err) {
@@ -504,29 +504,37 @@ function getCookie(request: Request, name: string) {
   return match ? match[2] : null;
 }
 
-async function pushInChunks(endpoint: string, apiKey: string, payload: any[], chunkSize: number = 50) {
+async function pushInChunks(endpoint: string, apiKey: string, payload: any[], chunkSize: number = 100) {
     let successCount = 0;
     let hasError = false;
+    let lastErrorMsg = '';
     for (let i = 0; i < payload.length; i += chunkSize) {
         const chunk = payload.slice(i, i + chunkSize);
         try {
             const res = await fetch(endpoint, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+                headers: { 
+                    'Content-Type': 'application/json', 
+                    'Authorization': `Bearer ${apiKey}`,
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                },
                 body: JSON.stringify(chunk)
             });
             if (res.ok) {
                 successCount += chunk.length;
             } else {
                 hasError = true;
-                console.error(`Sync chunk failed: ${res.status} ${res.statusText} at ${endpoint}`);
+                const errorText = await res.text();
+                lastErrorMsg = `${res.status} ${res.statusText} - ${errorText.substring(0, 150)}`;
+                console.error(`Sync chunk failed: ${res.status} ${res.statusText} at ${endpoint}. Detail: ${errorText}`);
             }
-        } catch (e) {
+        } catch (e: any) {
             hasError = true;
+            lastErrorMsg = e.message;
             console.error(`Sync chunk error:`, e);
         }
     }
-    return { ok: successCount > 0, updated: successCount, hasError };
+    return { ok: successCount > 0, updated: successCount, hasError, error: lastErrorMsg };
 }
 
 export default {
@@ -938,7 +946,7 @@ export default {
           if (chtData.length > 0) {
             const payload = chtData.map((r: any) => ({ id: r.id, stock: r.stock, backorder: !!r.backorder, force_in_stock: !!r.force_in_stock }));
             const res = await pushInChunks(settings.cht_endpoint, settings.cht_api_key, payload);
-            resultsObj.cht = { status: res.hasError ? 207 : 200, ok: res.ok, updated: res.updated };
+            resultsObj.cht = { status: res.hasError ? 207 : 200, ok: res.ok, updated: res.updated, error: res.error };
           } else {
             resultsObj.cht = { ok: false, reason: 'No mapped products for CHT' };
           }
@@ -950,7 +958,7 @@ export default {
           if (gtoData.length > 0) {
             const payload = gtoData.map((r: any) => ({ id: r.id, stock: r.stock, backorder: !!r.backorder, force_in_stock: !!r.force_in_stock }));
             const res = await pushInChunks(settings.gto_endpoint, settings.gto_api_key, payload);
-            resultsObj.gto = { status: res.hasError ? 207 : 200, ok: res.ok, updated: res.updated };
+            resultsObj.gto = { status: res.hasError ? 207 : 200, ok: res.ok, updated: res.updated, error: res.error };
           } else {
             resultsObj.gto = { ok: false, reason: 'No mapped products for GTO' };
           }
