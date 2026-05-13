@@ -17,8 +17,8 @@
 	"d1_databases": [
 		{
 			"binding": "tile_db",
-			"database_name": "tile-db",
-			"database_id": "18922e08-92c2-4e1f-88d5-778dff4554b2"
+			"database_name": "stock_sync",
+			"database_id": "198f3657-69d9-4d01-8074-67472c4625eb"
 		}
 	]
 	/**
