@@ -504,7 +504,7 @@ function getCookie(request: Request, name: string) {
   return match ? match[2] : null;
 }
 
-async function pushInChunks(endpoint: string, apiKey: string, payload: any[], chunkSize: number = 100) {
+async function pushInChunks(endpoint: string, apiKey: string, payload: any[], chunkSize: number = 50) {
     let successCount = 0;
     let hasError = false;
     for (let i = 0; i < payload.length; i += chunkSize) {
