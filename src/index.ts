@@ -743,7 +743,9 @@ export default {
             const cacheKey = new Request(jsonUrl);
             let response = await caches.default.match(cacheKey);
             if (!response) {
-              response = await fetch(jsonUrl);
+              response = await fetch(jsonUrl, {
+                headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36' }
+              });
               if (response.ok) {
                 const responseToCache = new Response(response.body, response);
                 responseToCache.headers.append('Cache-Control', 's-maxage=3600');
@@ -838,7 +840,9 @@ export default {
         
         let response = await cache.match(cacheKey);
         if (!response) {
-          response = await fetch(jsonUrl);
+          response = await fetch(jsonUrl, {
+            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36' }
+          });
           if (response.ok) {
             const responseToCache = new Response(response.body, response);
             responseToCache.headers.append('Cache-Control', 's-maxage=3600'); // Cache for 1 hour
