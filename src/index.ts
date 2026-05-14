@@ -761,12 +761,16 @@ export default {
         const gtoMap = await resolveNames('gto_products_json_url');
 
         const stmt = env.tile_db.prepare(`
-          INSERT INTO products (sku, name, stock, rrp, mpb, pcs, brp, cht_product_id, cht_product_name, gto_product_id, gto_product_name, updated_at)
-          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, CURRENT_TIMESTAMP)
+           INSERT INTO products (sku, name, stock, rrp, mpb, pcs, brp, cht_product_id, cht_product_name, gto_product_id, gto_product_name, backorder, updated_at)
+          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, CASE WHEN ?2 LIKE '%backorder%' THEN 1 ELSE 0 END, CURRENT_TIMESTAMP)
           ON CONFLICT(sku) DO UPDATE SET
             name = excluded.name, stock = excluded.stock, rrp = excluded.rrp, mpb = excluded.mpb, pcs = excluded.pcs, brp = excluded.brp,
             cht_product_id = excluded.cht_product_id, cht_product_name = excluded.cht_product_name,
             gto_product_id = excluded.gto_product_id, gto_product_name = excluded.gto_product_name,
+            backorder = CASE 
+                WHEN excluded.name IS NOT NULL AND excluded.name IS NOT products.name THEN CASE WHEN excluded.name LIKE '%backorder%' THEN 1 ELSE 0 END
+                ELSE products.backorder
+            END,
             updated_at = CURRENT_TIMESTAMP
         `);
 
@@ -1009,8 +1013,8 @@ export default {
 
         // Prepare statement using UPSERT to insert or update existing products
         const stmt = env.tile_db.prepare(`
-          INSERT INTO products (sku, name, stock, rrp, mpb, pcs, brp, updated_at)
-          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, CURRENT_TIMESTAMP)
+          INSERT INTO products (sku, name, stock, rrp, mpb, pcs, brp, backorder, updated_at)
+          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, CASE WHEN ?2 LIKE '%backorder%' THEN 1 ELSE 0 END, CURRENT_TIMESTAMP)
           ON CONFLICT(sku) DO UPDATE SET
             name = COALESCE(excluded.name, products.name),
             stock = COALESCE(excluded.stock, products.stock),
@@ -1018,6 +1022,10 @@ export default {
             mpb = COALESCE(excluded.mpb, products.mpb),
             pcs = COALESCE(excluded.pcs, products.pcs),
             brp = COALESCE(excluded.brp, products.brp),
+            backorder = CASE 
+                WHEN excluded.name IS NOT NULL AND excluded.name IS NOT products.name THEN CASE WHEN excluded.name LIKE '%backorder%' THEN 1 ELSE 0 END
+                ELSE products.backorder
+            END,
             updated_at = CURRENT_TIMESTAMP
         `);
 
