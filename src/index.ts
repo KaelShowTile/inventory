@@ -7,7 +7,7 @@ const ADMIN_HTML = `
     <title>Tile Inventory Mapping Admin</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.0/css/bootstrap.min.css">
     <link rel="stylesheet" href="https://cdn.datatables.net/1.13.6/css/dataTables.bootstrap5.min.css">
-    <style> body { background-color: #f8f9fa; } .container-fluid { padding: 20px; } tr th.sorting{max-width: 300px; min-width: 100px; vertical-align: middle;}</style>
+    <style> body { background-color: #f8f9fa; } .container-fluid { padding: 20px; } tr th.sorting{max-width: 300px; min-width: 75px; width: auto !important; vertical-align: middle; font-size: 14px; padding: 10px 15px 10px 15px !important;} table.dataTable tbody tr{font-size: 14px;}tr th.sorting.small-col{min-width: 50px;}table.dataTable thead>tr>th.sorting:before, table.dataTable thead>tr>th.sorting:after{right: auto !important; left: 0 !important;}tr th.sorting.button-col{min-width: 100px;}</style>
 </head>
 <body>
     <nav class="navbar navbar-expand-lg navbar-dark bg-dark mb-4">
@@ -33,18 +33,18 @@ const ADMIN_HTML = `
             <thead>
                 <tr>
                     <th>SKU</th>
-                    <th>Name</th>
-                    <th>Stock</th>
-                    <th>RRP</th>
-                    <th>MPB</th>
-                    <th>PCS</th>
-                    <th>BRP</th>
-                    <th>Backorder</th>
-                    <th>Force In Stock</th>
+                    <th class="large-col">Name</th>
+                    <th class="small-col">Stock</th>
+                    <th class="small-col">RRP</th>
+                    <th class="small-col">MPB</th>
+                    <th class="small-col">PCS</th>
+                    <th class="small-col">BRP</th>
+                    <th class="small-col">Backorder</th>
+                    <th class="small-col">InStock</th>
                     <th>Update Date</th>
-                    <th>CHT Name</th>
-                    <th>GTO Name</th>
-                    <th>Action</th>
+                    <th class="large-col">CHT Name</th>
+                    <th class="large-col">GTO Name</th>
+                    <th class="button-col">Action</th>
                 </tr>
             </thead>
             <tbody>
