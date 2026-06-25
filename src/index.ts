@@ -505,36 +505,44 @@ function getCookie(request: Request, name: string) {
 }
 
 async function pushInChunks(endpoint: string, apiKey: string, payload: any[], chunkSize: number = 100) {
-    let successCount = 0;
-    let hasError = false;
-    let lastErrorMsg = '';
-    for (let i = 0; i < payload.length; i += chunkSize) {
-        const chunk = payload.slice(i, i + chunkSize);
-        try {
-            const res = await fetch(endpoint, {
-                method: 'POST',
-                headers: { 
-                    'Content-Type': 'application/json', 
-                    'Authorization': `Bearer ${apiKey}`,
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-                },
-                body: JSON.stringify(chunk)
-            });
-            if (res.ok) {
-                successCount += chunk.length;
-            } else {
-                hasError = true;
-                const errorText = await res.text();
-                lastErrorMsg = `${res.status} ${res.statusText} - ${errorText.substring(0, 150)}`;
-                console.error(`Sync chunk failed: ${res.status} ${res.statusText} at ${endpoint}. Detail: ${errorText}`);
-            }
-        } catch (e: any) {
-            hasError = true;
-            lastErrorMsg = e.message;
-            console.error(`Sync chunk error:`, e);
-        }
+  let successCount = 0;
+  let hasError = false;
+  let lastErrorMsg = '';
+  for (let i = 0; i < payload.length; i += chunkSize) {
+    const chunk = payload.slice(i, i + chunkSize);
+    try {
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`,
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        },
+        body: JSON.stringify(chunk)
+      });
+      if (res.ok) {
+        successCount += chunk.length;
+      } else {
+        hasError = true;
+        const errorText = await res.text();
+        lastErrorMsg = `${res.status} ${res.statusText} - ${errorText.substring(0, 150)}`;
+        console.error(`Sync chunk failed: ${res.status} ${res.statusText} at ${endpoint}. Detail: ${errorText}`);
+      }
+    } catch (e: any) {
+      hasError = true;
+      lastErrorMsg = e.message;
+      console.error(`Sync chunk error:`, e);
     }
-    return { ok: successCount > 0, updated: successCount, hasError, error: lastErrorMsg };
+  }
+  return { ok: successCount > 0, updated: successCount, hasError, error: lastErrorMsg };
+}
+
+async function sendUpdatesToQueue(queue: any, site: string, updates: any[], batchSize: number = 100) {
+  for (let i = 0; i < updates.length; i += batchSize) {
+    const chunk = updates.slice(i, i + batchSize);
+    const messages = chunk.map(update => ({ body: { site, update } }));
+    await queue.sendBatch(messages);
+  }
 }
 
 export default {
@@ -605,14 +613,14 @@ export default {
         // Verify token with Google's public endpoint
         const verifyRes = await fetch(`https://oauth2.googleapis.com/tokeninfo?id_token=${credential}`);
         if (!verifyRes.ok) return new Response('Invalid Google token', { status: 400 });
-        
+
         const payload: any = await verifyRes.json();
         const email = payload.email;
 
         // Check if email is in our allowlist
         const allowedEmails = (env.ALLOWED_EMAILS || 'your-email@gmail.com').split(',').map((e: string) => e.trim().toLowerCase());
         if (!allowedEmails.includes(email.toLowerCase())) {
-           return new Response(`Access Denied: Email not authorized. (Got: ${email})`, { status: 403 });
+          return new Response(`Access Denied: Email not authorized. (Got: ${email})`, { status: 403 });
         }
 
         // Create a signed session cookie
@@ -620,11 +628,11 @@ export default {
         const sessionToken = await signCookie(email, secret);
 
         return new Response('Redirecting...', {
-           status: 303, // 303 Redirects POST back to GET
-           headers: {
-              'Location': '/admin',
-              'Set-Cookie': `admin_session=${sessionToken}; HttpOnly; Secure; Path=/; Max-Age=604800`
-           }
+          status: 303, // 303 Redirects POST back to GET
+          headers: {
+            'Location': '/admin',
+            'Set-Cookie': `admin_session=${sessionToken}; HttpOnly; Secure; Path=/; Max-Age=604800`
+          }
         });
       } catch (e: any) {
         return new Response('Auth Error: ' + e.message, { status: 500 });
@@ -662,7 +670,7 @@ export default {
         // 1. Snapshot MAX stock BEFORE delete
         const { results: preCht } = await env.tile_db.prepare("SELECT cht_product_id as id, MAX(stock) as max_stock, MAX(backorder) as backorder, MAX(force_in_stock) as force_in_stock FROM products WHERE cht_product_id IS NOT NULL GROUP BY cht_product_id").all();
         const preChtMap = new Map(preCht.map((r: any) => [r.id, { stock: r.max_stock, backorder: r.backorder, force_in_stock: r.force_in_stock }]));
-        
+
         const { results: preGto } = await env.tile_db.prepare("SELECT gto_product_id as id, MAX(stock) as max_stock, MAX(backorder) as backorder, MAX(force_in_stock) as force_in_stock FROM products WHERE gto_product_id IS NOT NULL GROUP BY gto_product_id").all();
         const preGtoMap = new Map(preGto.map((r: any) => [r.id, { stock: r.max_stock, backorder: r.backorder, force_in_stock: r.force_in_stock }]));
 
@@ -672,7 +680,7 @@ export default {
         // 3. Snapshot MAX stock AFTER delete
         const { results: postCht } = await env.tile_db.prepare("SELECT cht_product_id as id, MAX(stock) as max_stock, MAX(backorder) as backorder, MAX(force_in_stock) as force_in_stock FROM products WHERE cht_product_id IS NOT NULL GROUP BY cht_product_id").all();
         const postChtMap = new Map(postCht.map((r: any) => [r.id, { stock: r.max_stock, backorder: r.backorder, force_in_stock: r.force_in_stock }]));
-        
+
         const { results: postGto } = await env.tile_db.prepare("SELECT gto_product_id as id, MAX(stock) as max_stock, MAX(backorder) as backorder, MAX(force_in_stock) as force_in_stock FROM products WHERE gto_product_id IS NOT NULL GROUP BY gto_product_id").all();
         const postGtoMap = new Map(postGto.map((r: any) => [r.id, { stock: r.max_stock, backorder: r.backorder, force_in_stock: r.force_in_stock }]));
 
@@ -680,35 +688,35 @@ export default {
         const chtUpdates: any[] = [];
         const allChtIds = new Set([...preChtMap.keys(), ...postChtMap.keys()]);
         for (const id of allChtIds) {
-            const oldVal = preChtMap.get(id) ?? { stock: 0, backorder: 0, force_in_stock: 0 };
-            const newVal = postChtMap.get(id) ?? { stock: 0, backorder: 0, force_in_stock: 0 };
-            if (oldVal.stock !== newVal.stock || oldVal.backorder !== newVal.backorder || oldVal.force_in_stock !== newVal.force_in_stock) {
-                chtUpdates.push({ id, stock: newVal.stock, backorder: !!newVal.backorder, force_in_stock: !!newVal.force_in_stock });
-            }
+          const oldVal = preChtMap.get(id) ?? { stock: 0, backorder: 0, force_in_stock: 0 };
+          const newVal = postChtMap.get(id) ?? { stock: 0, backorder: 0, force_in_stock: 0 };
+          if (oldVal.stock !== newVal.stock || oldVal.backorder !== newVal.backorder || oldVal.force_in_stock !== newVal.force_in_stock) {
+            chtUpdates.push({ id, stock: newVal.stock, backorder: !!newVal.backorder, force_in_stock: !!newVal.force_in_stock });
+          }
         }
-        
+
         const gtoUpdates: any[] = [];
         const allGtoIds = new Set([...preGtoMap.keys(), ...postGtoMap.keys()]);
         for (const id of allGtoIds) {
-            const oldVal = preGtoMap.get(id) ?? { stock: 0, backorder: 0, force_in_stock: 0 };
-            const newVal = postGtoMap.get(id) ?? { stock: 0, backorder: 0, force_in_stock: 0 };
-            if (oldVal.stock !== newVal.stock || oldVal.backorder !== newVal.backorder || oldVal.force_in_stock !== newVal.force_in_stock) {
-                gtoUpdates.push({ id, stock: newVal.stock, backorder: !!newVal.backorder, force_in_stock: !!newVal.force_in_stock });
-            }
+          const oldVal = preGtoMap.get(id) ?? { stock: 0, backorder: 0, force_in_stock: 0 };
+          const newVal = postGtoMap.get(id) ?? { stock: 0, backorder: 0, force_in_stock: 0 };
+          if (oldVal.stock !== newVal.stock || oldVal.backorder !== newVal.backorder || oldVal.force_in_stock !== newVal.force_in_stock) {
+            gtoUpdates.push({ id, stock: newVal.stock, backorder: !!newVal.backorder, force_in_stock: !!newVal.force_in_stock });
+          }
         }
 
         // 5. Auto-push to websites if there are changes
         if (chtUpdates.length > 0 || gtoUpdates.length > 0) {
-            const { results: settingsRows } = await env.tile_db.prepare("SELECT * FROM settings").all();
-            const settings: any = {};
-            settingsRows.forEach((r: any) => settings[r.key] = r.value);
+          const { results: settingsRows } = await env.tile_db.prepare("SELECT * FROM settings").all();
+          const settings: any = {};
+          settingsRows.forEach((r: any) => settings[r.key] = r.value);
 
-            if (chtUpdates.length > 0 && settings.cht_endpoint && settings.cht_api_key) {
-                ctx.waitUntil(pushInChunks(settings.cht_endpoint, settings.cht_api_key, chtUpdates).catch(e => console.error("Auto CHT Push Error:", e)));
-            }
-            if (gtoUpdates.length > 0 && settings.gto_endpoint && settings.gto_api_key) {
-                ctx.waitUntil(pushInChunks(settings.gto_endpoint, settings.gto_api_key, gtoUpdates).catch(e => console.error("Auto GTO Push Error:", e)));
-            }
+          if (chtUpdates.length > 0 && env.STOCK_QUEUE) {
+            ctx.waitUntil(sendUpdatesToQueue(env.STOCK_QUEUE, 'cht', chtUpdates).catch(e => console.error("Auto CHT Queue Error:", e)));
+          }
+          if (gtoUpdates.length > 0 && env.STOCK_QUEUE) {
+            ctx.waitUntil(sendUpdatesToQueue(env.STOCK_QUEUE, 'gto', gtoUpdates).catch(e => console.error("Auto GTO Queue Error:", e)));
+          }
         }
 
         return new Response(JSON.stringify({ status: 'success' }), { headers: { 'Content-Type': 'application/json' } });
@@ -754,7 +762,7 @@ export default {
             }
             const products = await response.clone().json();
             return new Map(products.map((p: any) => [Number(p.id), p.name]));
-          } catch(e) { return new Map(); }
+          } catch (e) { return new Map(); }
         };
 
         const chtMap = await resolveNames('cht_products_json_url');
@@ -775,9 +783,9 @@ export default {
         `);
 
         const batchStatements = items.map((p: any) => {
-           const chtName = p.cht_product_id ? (chtMap.get(p.cht_product_id) || null) : null;
-           const gtoName = p.gto_product_id ? (gtoMap.get(p.gto_product_id) || null) : null;
-           return stmt.bind(p.sku, p.name || null, p.stock ?? null, p.rrp ?? null, p.mpb ?? null, p.pcs ?? null, p.brp ?? null, p.cht_product_id ?? null, chtName, p.gto_product_id ?? null, gtoName);
+          const chtName = p.cht_product_id ? (chtMap.get(p.cht_product_id) || null) : null;
+          const gtoName = p.gto_product_id ? (gtoMap.get(p.gto_product_id) || null) : null;
+          return stmt.bind(p.sku, p.name || null, p.stock ?? null, p.rrp ?? null, p.mpb ?? null, p.pcs ?? null, p.brp ?? null, p.cht_product_id ?? null, chtName, p.gto_product_id ?? null, gtoName);
         });
 
         // Execute in chunks to respect database limits
@@ -805,7 +813,7 @@ export default {
         return new Response(JSON.stringify({ data: settingsObj }), {
           headers: { 'Content-Type': 'application/json' }
         });
-      } catch(e) {
+      } catch (e) {
         // If the table doesn't exist yet, return empty object
         return new Response(JSON.stringify({ data: {} }), { headers: { 'Content-Type': 'application/json' } });
       }
@@ -841,7 +849,7 @@ export default {
         const jsonUrl = setting.value as string;
         const cacheKey = new Request(jsonUrl);
         const cache = caches.default;
-        
+
         let response = await cache.match(cacheKey);
         if (!response) {
           response = await fetch(jsonUrl, {
@@ -855,7 +863,7 @@ export default {
             throw new Error('Failed to fetch JSON from remote site');
           }
         }
-        
+
         const products = await response.clone().json();
         const filtered = products.filter((p: any) => p.name.toLowerCase().includes(keyword)).slice(0, 10);
         return new Response(JSON.stringify({ data: filtered }), { headers: { 'Content-Type': 'application/json' } });
@@ -871,7 +879,7 @@ export default {
         // 1. Snapshot MAX stock BEFORE map update
         const { results: preCht } = await env.tile_db.prepare("SELECT cht_product_id as id, MAX(stock) as max_stock, MAX(backorder) as backorder, MAX(force_in_stock) as force_in_stock FROM products WHERE cht_product_id IS NOT NULL GROUP BY cht_product_id").all();
         const preChtMap = new Map(preCht.map((r: any) => [r.id, { stock: r.max_stock, backorder: r.backorder, force_in_stock: r.force_in_stock }]));
-        
+
         const { results: preGto } = await env.tile_db.prepare("SELECT gto_product_id as id, MAX(stock) as max_stock, MAX(backorder) as backorder, MAX(force_in_stock) as force_in_stock FROM products WHERE gto_product_id IS NOT NULL GROUP BY gto_product_id").all();
         const preGtoMap = new Map(preGto.map((r: any) => [r.id, { stock: r.max_stock, backorder: r.backorder, force_in_stock: r.force_in_stock }]));
 
@@ -893,7 +901,7 @@ export default {
         // 3. Snapshot MAX stock AFTER map update
         const { results: postCht } = await env.tile_db.prepare("SELECT cht_product_id as id, MAX(stock) as max_stock, MAX(backorder) as backorder, MAX(force_in_stock) as force_in_stock FROM products WHERE cht_product_id IS NOT NULL GROUP BY cht_product_id").all();
         const postChtMap = new Map(postCht.map((r: any) => [r.id, { stock: r.max_stock, backorder: r.backorder, force_in_stock: r.force_in_stock }]));
-        
+
         const { results: postGto } = await env.tile_db.prepare("SELECT gto_product_id as id, MAX(stock) as max_stock, MAX(backorder) as backorder, MAX(force_in_stock) as force_in_stock FROM products WHERE gto_product_id IS NOT NULL GROUP BY gto_product_id").all();
         const postGtoMap = new Map(postGto.map((r: any) => [r.id, { stock: r.max_stock, backorder: r.backorder, force_in_stock: r.force_in_stock }]));
 
@@ -901,35 +909,35 @@ export default {
         const chtUpdates: any[] = [];
         const allChtIds = new Set([...preChtMap.keys(), ...postChtMap.keys()]);
         for (const id of allChtIds) {
-            const oldVal = preChtMap.get(id) ?? { stock: 0, backorder: 0, force_in_stock: 0 };
-            const newVal = postChtMap.get(id) ?? { stock: 0, backorder: 0, force_in_stock: 0 };
-            if (oldVal.stock !== newVal.stock || oldVal.backorder !== newVal.backorder || oldVal.force_in_stock !== newVal.force_in_stock) {
-                chtUpdates.push({ id, stock: newVal.stock, backorder: !!newVal.backorder, force_in_stock: !!newVal.force_in_stock });
-            }
+          const oldVal = preChtMap.get(id) ?? { stock: 0, backorder: 0, force_in_stock: 0 };
+          const newVal = postChtMap.get(id) ?? { stock: 0, backorder: 0, force_in_stock: 0 };
+          if (oldVal.stock !== newVal.stock || oldVal.backorder !== newVal.backorder || oldVal.force_in_stock !== newVal.force_in_stock) {
+            chtUpdates.push({ id, stock: newVal.stock, backorder: !!newVal.backorder, force_in_stock: !!newVal.force_in_stock });
+          }
         }
-        
+
         const gtoUpdates: any[] = [];
         const allGtoIds = new Set([...preGtoMap.keys(), ...postGtoMap.keys()]);
         for (const id of allGtoIds) {
-            const oldVal = preGtoMap.get(id) ?? { stock: 0, backorder: 0, force_in_stock: 0 };
-            const newVal = postGtoMap.get(id) ?? { stock: 0, backorder: 0, force_in_stock: 0 };
-            if (oldVal.stock !== newVal.stock || oldVal.backorder !== newVal.backorder || oldVal.force_in_stock !== newVal.force_in_stock) {
-                gtoUpdates.push({ id, stock: newVal.stock, backorder: !!newVal.backorder, force_in_stock: !!newVal.force_in_stock });
-            }
+          const oldVal = preGtoMap.get(id) ?? { stock: 0, backorder: 0, force_in_stock: 0 };
+          const newVal = postGtoMap.get(id) ?? { stock: 0, backorder: 0, force_in_stock: 0 };
+          if (oldVal.stock !== newVal.stock || oldVal.backorder !== newVal.backorder || oldVal.force_in_stock !== newVal.force_in_stock) {
+            gtoUpdates.push({ id, stock: newVal.stock, backorder: !!newVal.backorder, force_in_stock: !!newVal.force_in_stock });
+          }
         }
 
         // 5. Auto-push to websites if there are changes
         if (chtUpdates.length > 0 || gtoUpdates.length > 0) {
-            const { results: settingsRows } = await env.tile_db.prepare("SELECT * FROM settings").all();
-            const settings: any = {};
-            settingsRows.forEach((r: any) => settings[r.key] = r.value);
+          const { results: settingsRows } = await env.tile_db.prepare("SELECT * FROM settings").all();
+          const settings: any = {};
+          settingsRows.forEach((r: any) => settings[r.key] = r.value);
 
-            if (chtUpdates.length > 0 && settings.cht_endpoint && settings.cht_api_key) {
-                ctx.waitUntil(pushInChunks(settings.cht_endpoint, settings.cht_api_key, chtUpdates).catch(e => console.error("Auto CHT Push Error:", e)));
-            }
-            if (gtoUpdates.length > 0 && settings.gto_endpoint && settings.gto_api_key) {
-                ctx.waitUntil(pushInChunks(settings.gto_endpoint, settings.gto_api_key, gtoUpdates).catch(e => console.error("Auto GTO Push Error:", e)));
-            }
+          if (chtUpdates.length > 0 && env.STOCK_QUEUE) {
+            ctx.waitUntil(sendUpdatesToQueue(env.STOCK_QUEUE, 'cht', chtUpdates).catch(e => console.error("Auto CHT Queue Error:", e)));
+          }
+          if (gtoUpdates.length > 0 && env.STOCK_QUEUE) {
+            ctx.waitUntil(sendUpdatesToQueue(env.STOCK_QUEUE, 'gto', gtoUpdates).catch(e => console.error("Auto GTO Queue Error:", e)));
+          }
         }
 
         return new Response(JSON.stringify({ status: 'success' }), { headers: { 'Content-Type': 'application/json' } });
@@ -983,10 +991,10 @@ export default {
       const EXPECTED_KEY = "w6`?k(b);KH09nDc3QO5`8<WhTs.@Mb7#~qe9k";
 
       if (!providedKey || providedKey !== EXPECTED_KEY) {
-        return new Response(JSON.stringify({ 
-          error: 'Unauthorized', 
-          message: 'Invaild API Key!' 
-        }), { 
+        return new Response(JSON.stringify({
+          error: 'Unauthorized',
+          message: 'Invaild API Key!'
+        }), {
           status: 401,
           headers: { 'Content-Type': 'application/json' }
         });
@@ -1007,7 +1015,7 @@ export default {
         // 1. Snapshot MAX stock BEFORE update
         const { results: preCht } = await env.tile_db.prepare("SELECT cht_product_id as id, MAX(stock) as max_stock, MAX(backorder) as backorder, MAX(force_in_stock) as force_in_stock FROM products WHERE cht_product_id IS NOT NULL GROUP BY cht_product_id").all();
         const preChtMap = new Map(preCht.map((r: any) => [r.id, { stock: r.max_stock, backorder: r.backorder, force_in_stock: r.force_in_stock }]));
-        
+
         const { results: preGto } = await env.tile_db.prepare("SELECT gto_product_id as id, MAX(stock) as max_stock, MAX(backorder) as backorder, MAX(force_in_stock) as force_in_stock FROM products WHERE gto_product_id IS NOT NULL GROUP BY gto_product_id").all();
         const preGtoMap = new Map(preGto.map((r: any) => [r.id, { stock: r.max_stock, backorder: r.backorder, force_in_stock: r.force_in_stock }]));
 
@@ -1029,14 +1037,14 @@ export default {
             updated_at = CURRENT_TIMESTAMP
         `);
 
-        const batchStatements = items.map((p: any) => 
+        const batchStatements = items.map((p: any) =>
           stmt.bind(
-            p.sku, 
+            p.sku,
             p.name ?? p.description ?? null, // Fallback to description if name is not present
-            p.stock ?? null, 
-            p.rrp ?? null, 
-            p.mpb ?? null, 
-            p.pcs ?? null, 
+            p.stock ?? null,
+            p.rrp ?? null,
+            p.mpb ?? null,
+            p.pcs ?? null,
             p.brp ?? null
           )
         );
@@ -1048,7 +1056,7 @@ export default {
         // 2. Snapshot MAX stock AFTER update
         const { results: postCht } = await env.tile_db.prepare("SELECT cht_product_id as id, MAX(stock) as max_stock, MAX(backorder) as backorder, MAX(force_in_stock) as force_in_stock FROM products WHERE cht_product_id IS NOT NULL GROUP BY cht_product_id").all();
         const postChtMap = new Map(postCht.map((r: any) => [r.id, { stock: r.max_stock, backorder: r.backorder, force_in_stock: r.force_in_stock }]));
-        
+
         const { results: postGto } = await env.tile_db.prepare("SELECT gto_product_id as id, MAX(stock) as max_stock, MAX(backorder) as backorder, MAX(force_in_stock) as force_in_stock FROM products WHERE gto_product_id IS NOT NULL GROUP BY gto_product_id").all();
         const postGtoMap = new Map(postGto.map((r: any) => [r.id, { stock: r.max_stock, backorder: r.backorder, force_in_stock: r.force_in_stock }]));
 
@@ -1056,42 +1064,42 @@ export default {
         const chtUpdates: any[] = [];
         const allChtIds = new Set([...preChtMap.keys(), ...postChtMap.keys()]);
         for (const id of allChtIds) {
-            const oldVal = preChtMap.get(id) ?? { stock: 0, backorder: 0, force_in_stock: 0 };
-            const newVal = postChtMap.get(id) ?? { stock: 0, backorder: 0, force_in_stock: 0 };
-            if (oldVal.stock !== newVal.stock || oldVal.backorder !== newVal.backorder || oldVal.force_in_stock !== newVal.force_in_stock) {
-                chtUpdates.push({ id, stock: newVal.stock, backorder: !!newVal.backorder, force_in_stock: !!newVal.force_in_stock });
-            }
+          const oldVal = preChtMap.get(id) ?? { stock: 0, backorder: 0, force_in_stock: 0 };
+          const newVal = postChtMap.get(id) ?? { stock: 0, backorder: 0, force_in_stock: 0 };
+          if (oldVal.stock !== newVal.stock || oldVal.backorder !== newVal.backorder || oldVal.force_in_stock !== newVal.force_in_stock) {
+            chtUpdates.push({ id, stock: newVal.stock, backorder: !!newVal.backorder, force_in_stock: !!newVal.force_in_stock });
+          }
         }
-        
+
         const gtoUpdates: any[] = [];
         const allGtoIds = new Set([...preGtoMap.keys(), ...postGtoMap.keys()]);
         for (const id of allGtoIds) {
-            const oldVal = preGtoMap.get(id) ?? { stock: 0, backorder: 0, force_in_stock: 0 };
-            const newVal = postGtoMap.get(id) ?? { stock: 0, backorder: 0, force_in_stock: 0 };
-            if (oldVal.stock !== newVal.stock || oldVal.backorder !== newVal.backorder || oldVal.force_in_stock !== newVal.force_in_stock) {
-                gtoUpdates.push({ id, stock: newVal.stock, backorder: !!newVal.backorder, force_in_stock: !!newVal.force_in_stock });
-            }
+          const oldVal = preGtoMap.get(id) ?? { stock: 0, backorder: 0, force_in_stock: 0 };
+          const newVal = postGtoMap.get(id) ?? { stock: 0, backorder: 0, force_in_stock: 0 };
+          if (oldVal.stock !== newVal.stock || oldVal.backorder !== newVal.backorder || oldVal.force_in_stock !== newVal.force_in_stock) {
+            gtoUpdates.push({ id, stock: newVal.stock, backorder: !!newVal.backorder, force_in_stock: !!newVal.force_in_stock });
+          }
         }
 
         // 4. Auto-push to websites if there are changes
         let pushResults = { cht_pushed: chtUpdates.length, gto_pushed: gtoUpdates.length };
         if (chtUpdates.length > 0 || gtoUpdates.length > 0) {
-            const { results: settingsRows } = await env.tile_db.prepare("SELECT * FROM settings").all();
-            const settings: any = {};
-            settingsRows.forEach((r: any) => settings[r.key] = r.value);
+          const { results: settingsRows } = await env.tile_db.prepare("SELECT * FROM settings").all();
+          const settings: any = {};
+          settingsRows.forEach((r: any) => settings[r.key] = r.value);
 
-            // Use ctx.waitUntil so the worker responds to C# instantly while sending HTTP requests to WP in the background
-            if (chtUpdates.length > 0 && settings.cht_endpoint && settings.cht_api_key) {
-                ctx.waitUntil(pushInChunks(settings.cht_endpoint, settings.cht_api_key, chtUpdates).catch(e => console.error("Auto CHT Push Error:", e)));
-            }
+          // Use ctx.waitUntil so the worker responds to C# instantly while sending updates to Queue in the background
+          if (chtUpdates.length > 0 && env.STOCK_QUEUE) {
+            ctx.waitUntil(sendUpdatesToQueue(env.STOCK_QUEUE, 'cht', chtUpdates).catch(e => console.error("Auto CHT Queue Error:", e)));
+          }
 
-            if (gtoUpdates.length > 0 && settings.gto_endpoint && settings.gto_api_key) {
-                ctx.waitUntil(pushInChunks(settings.gto_endpoint, settings.gto_api_key, gtoUpdates).catch(e => console.error("Auto GTO Push Error:", e)));
-            }
+          if (gtoUpdates.length > 0 && env.STOCK_QUEUE) {
+            ctx.waitUntil(sendUpdatesToQueue(env.STOCK_QUEUE, 'gto', gtoUpdates).catch(e => console.error("Auto GTO Queue Error:", e)));
+          }
         }
 
-        return new Response(JSON.stringify({ 
-          status: 'success', 
+        return new Response(JSON.stringify({
+          status: 'success',
           message: 'Data successfully synced to the D1 database!',
           pushed_to_websites: pushResults
         }), { headers: { 'Content-Type': 'application/json' } });
@@ -1101,5 +1109,42 @@ export default {
     }
 
     return new Response('Not Found', { status: 404 });
+  },
+
+  async queue(batch: any, env: any) {
+
+    console.log("data received in queue.");
+    const chtMap = new Map();
+    const gtoMap = new Map();
+
+    for (const msg of batch.messages) {
+      if (msg.body.site === 'cht') {
+        chtMap.set(msg.body.update.id, msg.body.update);
+      } else if (msg.body.site === 'gto') {
+        gtoMap.set(msg.body.update.id, msg.body.update);
+      }
+    }
+
+    if (chtMap.size === 0 && gtoMap.size === 0) return;
+
+    let settings: any = {};
+    try {
+      const { results: settingsRows } = await env.tile_db.prepare("SELECT * FROM settings").all();
+      settingsRows.forEach((r: any) => settings[r.key] = r.value);
+    } catch (e) {
+      console.error("Failed to fetch settings in queue handler:", e);
+      return;
+    }
+
+    if (chtMap.size > 0 && settings.cht_endpoint && settings.cht_api_key) {
+      const chtUpdates = Array.from(chtMap.values());
+      const res = await pushInChunks(settings.cht_endpoint, settings.cht_api_key, chtUpdates);
+      if (res.hasError) console.error("Queue CHT Push Error:", res.error);
+    }
+    if (gtoMap.size > 0 && settings.gto_endpoint && settings.gto_api_key) {
+      const gtoUpdates = Array.from(gtoMap.values());
+      const res = await pushInChunks(settings.gto_endpoint, settings.gto_api_key, gtoUpdates);
+      if (res.hasError) console.error("Queue GTO Push Error:", res.error);
+    }
   }
 };

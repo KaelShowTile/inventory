@@ -20,7 +20,24 @@
 			"database_name": "stock_sync",
 			"database_id": "198f3657-69d9-4d01-8074-67472c4625eb"
 		}
-	]
+	],
+	// 1. 允许你的 Worker 往队列里扔数据 (生产者)
+	"queues": {
+		"producers": [
+			{
+				"binding": "STOCK_QUEUE",
+				"queue": "stock-sync-queue"
+			}
+		],
+		// 2. 允许队列攒够了数据唤醒你的 Worker (消费者)
+		"consumers": [
+			{
+				"queue": "stock-sync-queue",
+				"max_batch_size": 50,
+				"max_batch_timeout": 60
+			}
+		]
+	}
 	/**
 	 * Smart Placement
 	 * https://developers.cloudflare.com/workers/configuration/smart-placement/#smart-placement
