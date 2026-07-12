@@ -17,6 +17,7 @@ const ADMIN_HTML = `
                 <ul class="navbar-nav me-auto">
                     <li class="nav-item"><a class="nav-link active" href="/admin">Products</a></li>
                     <li class="nav-item"><a class="nav-link" href="/admin/settings">Settings</a></li>
+                    <li class="nav-item"><a class="nav-link" href="/admin/logs">Logs</a></li>
                 </ul>
                 <ul class="navbar-nav">
                     <li class="nav-item"><a class="btn btn-danger" href="/logout">Logout</a></li>
@@ -296,6 +297,7 @@ const SETTINGS_HTML = `
                 <ul class="navbar-nav me-auto">
                     <li class="nav-item"><a class="nav-link" href="/admin">Products</a></li>
                     <li class="nav-item"><a class="nav-link active" href="/admin/settings">Settings</a></li>
+                    <li class="nav-item"><a class="nav-link" href="/admin/logs">Logs</a></li>
                 </ul>
                 <ul class="navbar-nav">
                     <li class="nav-item"><a class="btn btn-danger" href="/logout">Logout</a></li>
@@ -469,6 +471,164 @@ const SETTINGS_HTML = `
 </html>
 `;
 
+const LOGS_HTML = `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Sync Logs - Inventory Mapping</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.0/css/bootstrap.min.css">
+    <style> body { background-color: #f8f9fa; } .container-fluid { padding: 20px; } </style>
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark mb-4">
+        <div class="container-fluid" style="padding: 3px 20px 0;">
+            <a class="navbar-brand" style="margin-right:50px;margin-bottom: 3px;" href="/admin">ST Inventory Admin</a>
+            <div class="collapse navbar-collapse">
+                <ul class="navbar-nav me-auto">
+                    <li class="nav-item"><a class="nav-link" href="/admin">Products</a></li>
+                    <li class="nav-item"><a class="nav-link" href="/admin/settings">Settings</a></li>
+                    <li class="nav-item"><a class="nav-link active" href="/admin/logs">Logs</a></li>
+                </ul>
+                <ul class="navbar-nav">
+                    <li class="nav-item"><a class="btn btn-danger" href="/logout">Logout</a></li>
+                </ul>
+            </div>
+        </div>
+    </nav>
+    <div class="container-fluid">
+        <div class="d-flex justify-content-between align-items-center mb-3" style="margin-bottom: 30px !important; padding-bottom: 8px; border-bottom: 2px dashed #eee;">
+            <h2 style="margin-bottom: 0;">Sync Logs</h2>
+        </div>
+        <div class="table-responsive bg-white p-3 rounded shadow-sm">
+            <table class="table table-striped" id="logsTable">
+                <thead>
+                    <tr>
+                        <th style="width: 80px;">ID</th>
+                        <th style="width: 80px;">Site</th>
+                        <th style="width: 200px;">Time</th>
+                        <th>Request Payload</th>
+                        <th>Response Payload</th>
+                    </tr>
+                </thead>
+                <tbody id="logsBody">
+                    <tr><td colspan="5" class="text-center">Loading...</td></tr>
+                </tbody>
+            </table>
+            
+            <nav aria-label="Page navigation" class="mt-3">
+              <ul class="pagination justify-content-center" id="pagination">
+              </ul>
+            </nav>
+        </div>
+    </div>
+    
+    <!-- Modal for showing full payload -->
+    <div class="modal fade" id="payloadModal" tabindex="-1">
+      <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h5 class="modal-title" id="payloadModalTitle">Payload</h5>
+            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+          </div>
+          <div class="modal-body">
+            <pre id="payloadModalContent" style="white-space: pre-wrap; word-wrap: break-word; background: #f8f9fa; padding: 15px; border-radius: 5px;"></pre>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script src="https://code.jquery.com/jquery-3.7.0.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.0/js/bootstrap.bundle.min.js"></script>
+    <script>
+        $(document).ready(function() {
+            let currentPage = 1;
+            const limit = 10;
+            
+            function loadLogs(page) {
+                currentPage = page;
+                $.get('/api/logs?page=' + page + '&limit=' + limit, function(res) {
+                    const tbody = $('#logsBody');
+                    tbody.empty();
+                    if (res.data && res.data.length > 0) {
+                        res.data.forEach(log => {
+                            const date = new Date(log.created_at + 'Z').toLocaleString();
+                            const tr = $('<tr></tr>');
+                            tr.append('<td>' + log.id + '</td>');
+                            tr.append('<td><span class="badge bg-secondary">' + log.site.toUpperCase() + '</span></td>');
+                            tr.append('<td>' + date + '</td>');
+                            
+                            const reqBtn = $('<button class="btn btn-sm btn-outline-primary mb-1">View Request</button>');
+                            reqBtn.on('click', () => showModal('Request Payload (ID: ' + log.id + ')', log.request_payload));
+                            const tdReq = $('<td></td>').append(reqBtn);
+                            tr.append(tdReq);
+                            
+                            const resBtn = $('<button class="btn btn-sm btn-outline-info">View Response</button>');
+                            resBtn.on('click', () => showModal('Response Payload (ID: ' + log.id + ')', log.response_payload));
+                            const tdRes = $('<td></td>').append(resBtn);
+                            tr.append(tdRes);
+                            
+                            tbody.append(tr);
+                        });
+                        renderPagination(res.total);
+                    } else {
+                        tbody.append('<tr><td colspan="5" class="text-center">No logs found.</td></tr>');
+                        $('#pagination').empty();
+                    }
+                }).fail(function() {
+                    $('#logsBody').html('<tr><td colspan="5" class="text-center text-danger">Failed to load logs.</td></tr>');
+                });
+            }
+            
+            function renderPagination(total) {
+                const totalPages = Math.ceil(total / limit);
+                const pagination = $('#pagination');
+                pagination.empty();
+                
+                if (totalPages <= 1) return;
+                
+                const prevLi = $('<li class="page-item ' + (currentPage === 1 ? 'disabled' : '') + '"><a class="page-link" href="#">Previous</a></li>');
+                prevLi.on('click', function(e) {
+                    e.preventDefault();
+                    if (currentPage > 1) loadLogs(currentPage - 1);
+                });
+                pagination.append(prevLi);
+                
+                for (let i = 1; i <= totalPages; i++) {
+                    const li = $('<li class="page-item ' + (currentPage === i ? 'active' : '') + '"><a class="page-link" href="#">' + i + '</a></li>');
+                    li.on('click', function(e) {
+                        e.preventDefault();
+                        loadLogs(i);
+                    });
+                    pagination.append(li);
+                }
+                
+                const nextLi = $('<li class="page-item ' + (currentPage === totalPages ? 'disabled' : '') + '"><a class="page-link" href="#">Next</a></li>');
+                nextLi.on('click', function(e) {
+                    e.preventDefault();
+                    if (currentPage < totalPages) loadLogs(currentPage + 1);
+                });
+                pagination.append(nextLi);
+            }
+            
+            function showModal(title, content) {
+                $('#payloadModalTitle').text(title);
+                try {
+                    const parsed = JSON.parse(content);
+                    $('#payloadModalContent').text(JSON.stringify(parsed, null, 2));
+                } catch(e) {
+                    $('#payloadModalContent').text(content);
+                }
+                new bootstrap.Modal(document.getElementById('payloadModal')).show();
+            }
+            
+            loadLogs(1);
+        });
+    </script>
+</body>
+</html>
+`;
+
 async function signCookie(email: string, secret: string) {
   const encoder = new TextEncoder();
   const key = await crypto.subtle.importKey('raw', encoder.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
@@ -504,7 +664,7 @@ function getCookie(request: Request, name: string) {
   return match ? match[2] : null;
 }
 
-async function pushInChunks(endpoint: string, apiKey: string, payload: any[], chunkSize: number = 100) {
+async function pushInChunks(endpoint: string, apiKey: string, payload: any[], db: any, site: string, chunkSize: number = 100) {
   let successCount = 0;
   let hasError = false;
   let lastErrorMsg = '';
@@ -520,20 +680,67 @@ async function pushInChunks(endpoint: string, apiKey: string, payload: any[], ch
         },
         body: JSON.stringify(chunk)
       });
+      
+      const responseText = await res.text();
+      let isChunkError = false;
+
       if (res.ok) {
-        successCount += chunk.length;
+        try {
+          const responseJson = JSON.parse(responseText);
+          if (responseJson && Array.isArray(responseJson.data)) {
+            let chunkSuccess = 0;
+            let chunkErrorMsgs = [];
+            for (const item of responseJson.data) {
+              if (item.status === 'success') {
+                chunkSuccess++;
+              } else {
+                isChunkError = true;
+                chunkErrorMsgs.push(`ID ${item.id}: ${item.reason || 'Unknown error'}`);
+              }
+            }
+            successCount += chunkSuccess;
+            if (chunkErrorMsgs.length > 0) {
+              lastErrorMsg = chunkErrorMsgs.join(' | ');
+              console.error(`Sync chunk partial failures: ${lastErrorMsg}`);
+            }
+          } else {
+            successCount += chunk.length;
+          }
+        } catch (e: any) {
+           successCount += chunk.length;
+        }
       } else {
+        isChunkError = true;
         hasError = true;
-        const errorText = await res.text();
-        lastErrorMsg = `${res.status} ${res.statusText} - ${errorText.substring(0, 150)}`;
-        console.error(`Sync chunk failed: ${res.status} ${res.statusText} at ${endpoint}. Detail: ${errorText}`);
+        lastErrorMsg = `${res.status} ${res.statusText} - ${responseText.substring(0, 150)}`;
+        console.error(`Sync chunk failed: ${res.status} ${res.statusText} at ${endpoint}. Detail: ${responseText}`);
+      }
+      
+      if (isChunkError) {
+          hasError = true;
+      }
+
+      if (db) {
+        await db.prepare("INSERT INTO sync_logs (site, request_payload, response_payload) VALUES (?1, ?2, ?3)")
+          .bind(site, JSON.stringify(chunk), responseText)
+          .run();
       }
     } catch (e: any) {
       hasError = true;
       lastErrorMsg = e.message;
       console.error(`Sync chunk error:`, e);
+      if (db) {
+        await db.prepare("INSERT INTO sync_logs (site, request_payload, response_payload) VALUES (?1, ?2, ?3)")
+          .bind(site, JSON.stringify(chunk), `Error: ${e.message}`)
+          .run();
+      }
     }
   }
+  
+  if (db) {
+      await db.prepare("DELETE FROM sync_logs WHERE id NOT IN (SELECT id FROM sync_logs ORDER BY created_at DESC, id DESC LIMIT 100)").run();
+  }
+
   return { ok: successCount > 0, updated: successCount, hasError, error: lastErrorMsg };
 }
 
@@ -550,7 +757,7 @@ export default {
     const url = new URL(request.url);
 
     // 1. Auth Check for protected routes
-    const protectedRoutes = ['/admin', '/admin/settings', '/api/products', '/api/products/import', '/api/products/all', '/api/settings', '/api/mapping/search', '/api/products/map', '/api/sync-websites'];
+    const protectedRoutes = ['/admin', '/admin/settings', '/admin/logs', '/api/products', '/api/products/import', '/api/products/all', '/api/settings', '/api/mapping/search', '/api/products/map', '/api/sync-websites', '/api/logs'];
     if (protectedRoutes.includes(url.pathname)) {
       const cookie = getCookie(request, 'admin_session');
       const secret = env.COOKIE_SECRET || 'dev-secret-key-change-me';
@@ -805,6 +1012,33 @@ export default {
       });
     }
 
+    if (request.method === 'GET' && url.pathname === '/admin/logs') {
+      return new Response(LOGS_HTML, {
+        headers: { 'Content-Type': 'text/html;charset=UTF-8' }
+      });
+    }
+
+    if (request.method === 'GET' && url.pathname === '/api/logs') {
+      try {
+        const page = parseInt(url.searchParams.get('page') || '1', 10);
+        const limit = parseInt(url.searchParams.get('limit') || '10', 10);
+        const offset = (page - 1) * limit;
+
+        const { results: countResults } = await env.tile_db.prepare("SELECT COUNT(*) as total FROM sync_logs").all();
+        const total = countResults[0].total;
+
+        const { results } = await env.tile_db.prepare("SELECT * FROM sync_logs ORDER BY created_at DESC, id DESC LIMIT ?1 OFFSET ?2")
+          .bind(limit, offset)
+          .all();
+
+        return new Response(JSON.stringify({ data: results, total }), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      } catch (e: any) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+      }
+    }
+
     if (request.method === 'GET' && url.pathname === '/api/settings') {
       try {
         const { results } = await env.tile_db.prepare("SELECT * FROM settings").all();
@@ -961,7 +1195,7 @@ export default {
           const { results: chtData } = await env.tile_db.prepare("SELECT cht_product_id as id, MAX(stock) as stock, MAX(backorder) as backorder, MAX(force_in_stock) as force_in_stock FROM products WHERE cht_product_id IS NOT NULL GROUP BY cht_product_id").all();
           if (chtData.length > 0) {
             const payload = chtData.map((r: any) => ({ id: r.id, stock: r.stock, backorder: !!r.backorder, force_in_stock: !!r.force_in_stock }));
-            const res = await pushInChunks(settings.cht_endpoint, settings.cht_api_key, payload);
+            const res = await pushInChunks(settings.cht_endpoint, settings.cht_api_key, payload, env.tile_db, 'cht');
             resultsObj.cht = { status: res.hasError ? 207 : 200, ok: res.ok, updated: res.updated, error: res.error };
           } else {
             resultsObj.cht = { ok: false, reason: 'No mapped products for CHT' };
@@ -973,7 +1207,7 @@ export default {
           const { results: gtoData } = await env.tile_db.prepare("SELECT gto_product_id as id, MAX(stock) as stock, MAX(backorder) as backorder, MAX(force_in_stock) as force_in_stock FROM products WHERE gto_product_id IS NOT NULL GROUP BY gto_product_id").all();
           if (gtoData.length > 0) {
             const payload = gtoData.map((r: any) => ({ id: r.id, stock: r.stock, backorder: !!r.backorder, force_in_stock: !!r.force_in_stock }));
-            const res = await pushInChunks(settings.gto_endpoint, settings.gto_api_key, payload);
+            const res = await pushInChunks(settings.gto_endpoint, settings.gto_api_key, payload, env.tile_db, 'gto');
             resultsObj.gto = { status: res.hasError ? 207 : 200, ok: res.ok, updated: res.updated, error: res.error };
           } else {
             resultsObj.gto = { ok: false, reason: 'No mapped products for GTO' };
@@ -1138,12 +1372,12 @@ export default {
 
     if (chtMap.size > 0 && settings.cht_endpoint && settings.cht_api_key) {
       const chtUpdates = Array.from(chtMap.values());
-      const res = await pushInChunks(settings.cht_endpoint, settings.cht_api_key, chtUpdates);
+      const res = await pushInChunks(settings.cht_endpoint, settings.cht_api_key, chtUpdates, env.tile_db, 'cht');
       if (res.hasError) console.error("Queue CHT Push Error:", res.error);
     }
     if (gtoMap.size > 0 && settings.gto_endpoint && settings.gto_api_key) {
       const gtoUpdates = Array.from(gtoMap.values());
-      const res = await pushInChunks(settings.gto_endpoint, settings.gto_api_key, gtoUpdates);
+      const res = await pushInChunks(settings.gto_endpoint, settings.gto_api_key, gtoUpdates, env.tile_db, 'gto');
       if (res.hasError) console.error("Queue GTO Push Error:", res.error);
     }
   }
