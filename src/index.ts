@@ -680,7 +680,7 @@ async function pushInChunks(endpoint: string, apiKey: string, payload: any[], db
         },
         body: JSON.stringify(chunk)
       });
-      
+
       const responseText = await res.text();
       let isChunkError = false;
 
@@ -707,7 +707,7 @@ async function pushInChunks(endpoint: string, apiKey: string, payload: any[], db
             successCount += chunk.length;
           }
         } catch (e: any) {
-           successCount += chunk.length;
+          successCount += chunk.length;
         }
       } else {
         isChunkError = true;
@@ -715,9 +715,9 @@ async function pushInChunks(endpoint: string, apiKey: string, payload: any[], db
         lastErrorMsg = `${res.status} ${res.statusText} - ${responseText.substring(0, 150)}`;
         console.error(`Sync chunk failed: ${res.status} ${res.statusText} at ${endpoint}. Detail: ${responseText}`);
       }
-      
+
       if (isChunkError) {
-          hasError = true;
+        hasError = true;
       }
 
       if (db) {
@@ -736,9 +736,9 @@ async function pushInChunks(endpoint: string, apiKey: string, payload: any[], db
       }
     }
   }
-  
+
   if (db) {
-      await db.prepare("DELETE FROM sync_logs WHERE id NOT IN (SELECT id FROM sync_logs ORDER BY created_at DESC, id DESC LIMIT 100)").run();
+    await db.prepare("DELETE FROM sync_logs WHERE id NOT IN (SELECT id FROM sync_logs ORDER BY created_at DESC, id DESC LIMIT 100)").run();
   }
 
   return { ok: successCount > 0, updated: successCount, hasError, error: lastErrorMsg };
@@ -875,20 +875,20 @@ export default {
         if (!body.sku) return new Response(JSON.stringify({ error: 'SKU required' }), { status: 400 });
 
         // 1. Snapshot MAX stock BEFORE delete
-        const { results: preCht } = await env.tile_db.prepare("SELECT cht_product_id as id, MAX(stock) as max_stock, MAX(backorder) as backorder, MAX(force_in_stock) as force_in_stock FROM products WHERE cht_product_id IS NOT NULL GROUP BY cht_product_id").all();
+        const { results: preCht } = await env.tile_db.prepare("SELECT CAST(cht_product_id AS INTEGER) as id, MAX(CAST(stock AS REAL)) as max_stock, MAX(backorder) as backorder, MAX(force_in_stock) as force_in_stock FROM products WHERE cht_product_id IS NOT NULL GROUP BY CAST(cht_product_id AS INTEGER)").all();
         const preChtMap = new Map(preCht.map((r: any) => [r.id, { stock: r.max_stock, backorder: r.backorder, force_in_stock: r.force_in_stock }]));
 
-        const { results: preGto } = await env.tile_db.prepare("SELECT gto_product_id as id, MAX(stock) as max_stock, MAX(backorder) as backorder, MAX(force_in_stock) as force_in_stock FROM products WHERE gto_product_id IS NOT NULL GROUP BY gto_product_id").all();
+        const { results: preGto } = await env.tile_db.prepare("SELECT CAST(gto_product_id AS INTEGER) as id, MAX(CAST(stock AS REAL)) as max_stock, MAX(backorder) as backorder, MAX(force_in_stock) as force_in_stock FROM products WHERE gto_product_id IS NOT NULL GROUP BY CAST(gto_product_id AS INTEGER)").all();
         const preGtoMap = new Map(preGto.map((r: any) => [r.id, { stock: r.max_stock, backorder: r.backorder, force_in_stock: r.force_in_stock }]));
 
         // 2. Perform delete
         await env.tile_db.prepare("DELETE FROM products WHERE sku = ?").bind(body.sku).run();
 
         // 3. Snapshot MAX stock AFTER delete
-        const { results: postCht } = await env.tile_db.prepare("SELECT cht_product_id as id, MAX(stock) as max_stock, MAX(backorder) as backorder, MAX(force_in_stock) as force_in_stock FROM products WHERE cht_product_id IS NOT NULL GROUP BY cht_product_id").all();
+        const { results: postCht } = await env.tile_db.prepare("SELECT CAST(cht_product_id AS INTEGER) as id, MAX(CAST(stock AS REAL)) as max_stock, MAX(backorder) as backorder, MAX(force_in_stock) as force_in_stock FROM products WHERE cht_product_id IS NOT NULL GROUP BY CAST(cht_product_id AS INTEGER)").all();
         const postChtMap = new Map(postCht.map((r: any) => [r.id, { stock: r.max_stock, backorder: r.backorder, force_in_stock: r.force_in_stock }]));
 
-        const { results: postGto } = await env.tile_db.prepare("SELECT gto_product_id as id, MAX(stock) as max_stock, MAX(backorder) as backorder, MAX(force_in_stock) as force_in_stock FROM products WHERE gto_product_id IS NOT NULL GROUP BY gto_product_id").all();
+        const { results: postGto } = await env.tile_db.prepare("SELECT CAST(gto_product_id AS INTEGER) as id, MAX(CAST(stock AS REAL)) as max_stock, MAX(backorder) as backorder, MAX(force_in_stock) as force_in_stock FROM products WHERE gto_product_id IS NOT NULL GROUP BY CAST(gto_product_id AS INTEGER)").all();
         const postGtoMap = new Map(postGto.map((r: any) => [r.id, { stock: r.max_stock, backorder: r.backorder, force_in_stock: r.force_in_stock }]));
 
         // 4. Compare and find what actually changed
@@ -1111,10 +1111,10 @@ export default {
         const body: any = await request.json();
 
         // 1. Snapshot MAX stock BEFORE map update
-        const { results: preCht } = await env.tile_db.prepare("SELECT cht_product_id as id, MAX(stock) as max_stock, MAX(backorder) as backorder, MAX(force_in_stock) as force_in_stock FROM products WHERE cht_product_id IS NOT NULL GROUP BY cht_product_id").all();
+        const { results: preCht } = await env.tile_db.prepare("SELECT CAST(cht_product_id AS INTEGER) as id, MAX(CAST(stock AS REAL)) as max_stock, MAX(backorder) as backorder, MAX(force_in_stock) as force_in_stock FROM products WHERE cht_product_id IS NOT NULL GROUP BY CAST(cht_product_id AS INTEGER)").all();
         const preChtMap = new Map(preCht.map((r: any) => [r.id, { stock: r.max_stock, backorder: r.backorder, force_in_stock: r.force_in_stock }]));
 
-        const { results: preGto } = await env.tile_db.prepare("SELECT gto_product_id as id, MAX(stock) as max_stock, MAX(backorder) as backorder, MAX(force_in_stock) as force_in_stock FROM products WHERE gto_product_id IS NOT NULL GROUP BY gto_product_id").all();
+        const { results: preGto } = await env.tile_db.prepare("SELECT CAST(gto_product_id AS INTEGER) as id, MAX(CAST(stock AS REAL)) as max_stock, MAX(backorder) as backorder, MAX(force_in_stock) as force_in_stock FROM products WHERE gto_product_id IS NOT NULL GROUP BY CAST(gto_product_id AS INTEGER)").all();
         const preGtoMap = new Map(preGto.map((r: any) => [r.id, { stock: r.max_stock, backorder: r.backorder, force_in_stock: r.force_in_stock }]));
 
         // 2. Perform map update
@@ -1133,10 +1133,10 @@ export default {
         ).run();
 
         // 3. Snapshot MAX stock AFTER map update
-        const { results: postCht } = await env.tile_db.prepare("SELECT cht_product_id as id, MAX(stock) as max_stock, MAX(backorder) as backorder, MAX(force_in_stock) as force_in_stock FROM products WHERE cht_product_id IS NOT NULL GROUP BY cht_product_id").all();
+        const { results: postCht } = await env.tile_db.prepare("SELECT CAST(cht_product_id AS INTEGER) as id, MAX(CAST(stock AS REAL)) as max_stock, MAX(backorder) as backorder, MAX(force_in_stock) as force_in_stock FROM products WHERE cht_product_id IS NOT NULL GROUP BY CAST(cht_product_id AS INTEGER)").all();
         const postChtMap = new Map(postCht.map((r: any) => [r.id, { stock: r.max_stock, backorder: r.backorder, force_in_stock: r.force_in_stock }]));
 
-        const { results: postGto } = await env.tile_db.prepare("SELECT gto_product_id as id, MAX(stock) as max_stock, MAX(backorder) as backorder, MAX(force_in_stock) as force_in_stock FROM products WHERE gto_product_id IS NOT NULL GROUP BY gto_product_id").all();
+        const { results: postGto } = await env.tile_db.prepare("SELECT CAST(gto_product_id AS INTEGER) as id, MAX(CAST(stock AS REAL)) as max_stock, MAX(backorder) as backorder, MAX(force_in_stock) as force_in_stock FROM products WHERE gto_product_id IS NOT NULL GROUP BY CAST(gto_product_id AS INTEGER)").all();
         const postGtoMap = new Map(postGto.map((r: any) => [r.id, { stock: r.max_stock, backorder: r.backorder, force_in_stock: r.force_in_stock }]));
 
         // 4. Compare and find what actually changed
@@ -1192,7 +1192,7 @@ export default {
         // Sync CHT
         if (settings.cht_endpoint && settings.cht_api_key) {
           // Use MAX instead of SUM to get the highest batch stock
-          const { results: chtData } = await env.tile_db.prepare("SELECT cht_product_id as id, MAX(stock) as stock, MAX(backorder) as backorder, MAX(force_in_stock) as force_in_stock FROM products WHERE cht_product_id IS NOT NULL GROUP BY cht_product_id").all();
+          const { results: chtData } = await env.tile_db.prepare("SELECT CAST(cht_product_id AS INTEGER) as id, MAX(CAST(stock AS REAL)) as stock, MAX(backorder) as backorder, MAX(force_in_stock) as force_in_stock FROM products WHERE cht_product_id IS NOT NULL GROUP BY CAST(cht_product_id AS INTEGER)").all();
           if (chtData.length > 0) {
             const payload = chtData.map((r: any) => ({ id: r.id, stock: r.stock, backorder: !!r.backorder, force_in_stock: !!r.force_in_stock }));
             const res = await pushInChunks(settings.cht_endpoint, settings.cht_api_key, payload, env.tile_db, 'cht');
@@ -1204,7 +1204,7 @@ export default {
 
         // Sync GTO
         if (settings.gto_endpoint && settings.gto_api_key) {
-          const { results: gtoData } = await env.tile_db.prepare("SELECT gto_product_id as id, MAX(stock) as stock, MAX(backorder) as backorder, MAX(force_in_stock) as force_in_stock FROM products WHERE gto_product_id IS NOT NULL GROUP BY gto_product_id").all();
+          const { results: gtoData } = await env.tile_db.prepare("SELECT CAST(gto_product_id AS INTEGER) as id, MAX(CAST(stock AS REAL)) as stock, MAX(backorder) as backorder, MAX(force_in_stock) as force_in_stock FROM products WHERE gto_product_id IS NOT NULL GROUP BY CAST(gto_product_id AS INTEGER)").all();
           if (gtoData.length > 0) {
             const payload = gtoData.map((r: any) => ({ id: r.id, stock: r.stock, backorder: !!r.backorder, force_in_stock: !!r.force_in_stock }));
             const res = await pushInChunks(settings.gto_endpoint, settings.gto_api_key, payload, env.tile_db, 'gto');
@@ -1247,10 +1247,10 @@ export default {
         }
 
         // 1. Snapshot MAX stock BEFORE update
-        const { results: preCht } = await env.tile_db.prepare("SELECT cht_product_id as id, MAX(stock) as max_stock, MAX(backorder) as backorder, MAX(force_in_stock) as force_in_stock FROM products WHERE cht_product_id IS NOT NULL GROUP BY cht_product_id").all();
+        const { results: preCht } = await env.tile_db.prepare("SELECT CAST(cht_product_id AS INTEGER) as id, MAX(CAST(stock AS REAL)) as max_stock, MAX(backorder) as backorder, MAX(force_in_stock) as force_in_stock FROM products WHERE cht_product_id IS NOT NULL GROUP BY CAST(cht_product_id AS INTEGER)").all();
         const preChtMap = new Map(preCht.map((r: any) => [r.id, { stock: r.max_stock, backorder: r.backorder, force_in_stock: r.force_in_stock }]));
 
-        const { results: preGto } = await env.tile_db.prepare("SELECT gto_product_id as id, MAX(stock) as max_stock, MAX(backorder) as backorder, MAX(force_in_stock) as force_in_stock FROM products WHERE gto_product_id IS NOT NULL GROUP BY gto_product_id").all();
+        const { results: preGto } = await env.tile_db.prepare("SELECT CAST(gto_product_id AS INTEGER) as id, MAX(CAST(stock AS REAL)) as max_stock, MAX(backorder) as backorder, MAX(force_in_stock) as force_in_stock FROM products WHERE gto_product_id IS NOT NULL GROUP BY CAST(gto_product_id AS INTEGER)").all();
         const preGtoMap = new Map(preGto.map((r: any) => [r.id, { stock: r.max_stock, backorder: r.backorder, force_in_stock: r.force_in_stock }]));
 
         // Prepare statement using UPSERT to insert or update existing products
@@ -1288,10 +1288,10 @@ export default {
         }
 
         // 2. Snapshot MAX stock AFTER update
-        const { results: postCht } = await env.tile_db.prepare("SELECT cht_product_id as id, MAX(stock) as max_stock, MAX(backorder) as backorder, MAX(force_in_stock) as force_in_stock FROM products WHERE cht_product_id IS NOT NULL GROUP BY cht_product_id").all();
+        const { results: postCht } = await env.tile_db.prepare("SELECT CAST(cht_product_id AS INTEGER) as id, MAX(CAST(stock AS REAL)) as max_stock, MAX(backorder) as backorder, MAX(force_in_stock) as force_in_stock FROM products WHERE cht_product_id IS NOT NULL GROUP BY CAST(cht_product_id AS INTEGER)").all();
         const postChtMap = new Map(postCht.map((r: any) => [r.id, { stock: r.max_stock, backorder: r.backorder, force_in_stock: r.force_in_stock }]));
 
-        const { results: postGto } = await env.tile_db.prepare("SELECT gto_product_id as id, MAX(stock) as max_stock, MAX(backorder) as backorder, MAX(force_in_stock) as force_in_stock FROM products WHERE gto_product_id IS NOT NULL GROUP BY gto_product_id").all();
+        const { results: postGto } = await env.tile_db.prepare("SELECT CAST(gto_product_id AS INTEGER) as id, MAX(CAST(stock AS REAL)) as max_stock, MAX(backorder) as backorder, MAX(force_in_stock) as force_in_stock FROM products WHERE gto_product_id IS NOT NULL GROUP BY CAST(gto_product_id AS INTEGER)").all();
         const postGtoMap = new Map(postGto.map((r: any) => [r.id, { stock: r.max_stock, backorder: r.backorder, force_in_stock: r.force_in_stock }]));
 
         // 3. Compare and find what actually changed
