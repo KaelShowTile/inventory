@@ -33,8 +33,9 @@
 		"consumers": [
 			{
 				"queue": "stock-sync-queue",
-				"max_batch_size": 50,
-				"max_batch_timeout": 60
+				"max_batch_size": 100,
+				"max_batch_timeout": 60,
+				"max_retries": 10
 			}
 		]
 	}

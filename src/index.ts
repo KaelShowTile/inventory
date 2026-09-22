@@ -1,3 +1,10 @@
+import { createClient } from '@libsql/client/web';
+
+const tursoClient = createClient({
+  url: "libsql://test-db-showtile.aws-ap-northeast-1.turso.io",
+  authToken: "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhIjoicnciLCJpYXQiOjE3ODk5NjU3ODEsImlkIjoiMDFhMGMyMmItMGYwMS03NGI0LThmYWQtZGEyYWYyYWJlZWE4Iiwia2lkIjoiWlBSLWhXSXpyX25iX3EwaThBSkVZSGdwaER5VTRBbmFzeDdGNFhNNFFwUSIsInJpZCI6IjVhN2I2NzUwLWRhMTMtNGZhYS05MzNhLTlhYTRkNTJjMDdkYyJ9.FQFsiO5RTsimg7uSdWGQLGvWFPSuvbhJmD6GStxpkQ9KveNIKdmee2dcsm2RjcUAiPRu-KGZ0MBWIs7ww8cYAw"
+});
+
 //admin UI
 const ADMIN_HTML = `
 <!DOCTYPE html>
@@ -884,6 +891,13 @@ export default {
         // 2. Perform delete
         await env.tile_db.prepare("DELETE FROM products WHERE sku = ?").bind(body.sku).run();
 
+        // Turso dual-write
+        try {
+          await tursoClient.execute({ sql: "DELETE FROM inventory WHERE sku = ?", args: [body.sku] });
+        } catch (e: any) {
+          console.error("Turso dual-write error (DELETE product):", e);
+        }
+
         // 3. Snapshot MAX stock AFTER delete
         const { results: postCht } = await env.tile_db.prepare("SELECT CAST(cht_product_id AS INTEGER) as id, MAX(CAST(stock AS REAL)) as max_stock, MAX(backorder) as backorder, MAX(force_in_stock) as force_in_stock FROM products WHERE cht_product_id IS NOT NULL GROUP BY CAST(cht_product_id AS INTEGER)").all();
         const postChtMap = new Map(postCht.map((r: any) => [r.id, { stock: r.max_stock, backorder: r.backorder, force_in_stock: r.force_in_stock }]));
@@ -935,6 +949,13 @@ export default {
     if (request.method === 'DELETE' && url.pathname === '/api/products/all') {
       try {
         await env.tile_db.prepare("DELETE FROM products").run();
+
+        // Turso dual-write
+        try {
+          await tursoClient.execute("DELETE FROM inventory");
+        } catch (e: any) {
+          console.error("Turso dual-write error (DELETE all):", e);
+        }
         return new Response(JSON.stringify({ status: 'success' }), { headers: { 'Content-Type': 'application/json' } });
       } catch (e: any) {
         return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: { 'Content-Type': 'application/json' } });
@@ -999,6 +1020,25 @@ export default {
         for (let i = 0; i < batchStatements.length; i += 100) {
           await env.tile_db.batch(batchStatements.slice(i, i + 100));
         }
+
+        // Turso dual-write
+        try {
+          const tursoStatements = items.map((p: any) => ({
+            sql: `INSERT INTO inventory (sku, sales_description, available, rrp, m2_per_box, pcs_per_box, box_per_pallet)
+                  VALUES (?, ?, ?, ?, ?, ?, ?)
+                  ON CONFLICT(sku) DO UPDATE SET
+                  sales_description = excluded.sales_description, available = excluded.available, rrp = excluded.rrp, m2_per_box = excluded.m2_per_box, pcs_per_box = excluded.pcs_per_box, box_per_pallet = excluded.box_per_pallet`,
+            args: [p.sku, p.name || null, p.stock ?? null, p.rrp ?? null, p.mpb ?? null, p.pcs ?? null, p.brp ?? null]
+          }));
+          for (let i = 0; i < tursoStatements.length; i += 100) {
+            await tursoClient.batch(tursoStatements.slice(i, i + 100), "write");
+          }
+        } catch (e: any) {
+          console.error("Turso dual-write error (POST import):", e);
+        }
+
+        // Update settings timestamp
+        await env.tile_db.prepare("INSERT INTO settings (key, value) VALUES ('last_import_time', CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET value = CURRENT_TIMESTAMP").run();
 
         return new Response(JSON.stringify({ status: 'success', imported: items.length }), { headers: { 'Content-Type': 'application/json' } });
       } catch (e: any) {
