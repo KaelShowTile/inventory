@@ -1302,15 +1302,88 @@ export default {
 
         // Turso dual-write
         try {
-          const tursoStatements = items.map((p: any) => ({
-            sql: `INSERT INTO inventory (sku, sales_description, available, rrp, m2_per_box, pcs_per_box, box_per_pallet)
-                  VALUES (?, ?, ?, ?, ?, ?, ?)
-                  ON CONFLICT(sku) DO UPDATE SET
-                  sales_description = excluded.sales_description, available = excluded.available, rrp = excluded.rrp, m2_per_box = excluded.m2_per_box, pcs_per_box = excluded.pcs_per_box, box_per_pallet = excluded.box_per_pallet`,
-            args: [p.sku, p.name ?? p.description ?? null, p.stock ?? null, p.rrp ?? null, p.mpb ?? null, p.pcs ?? null, p.brp ?? null]
-          }));
+          const skusToUpdate: string[] = items.map((p: any) => p.sku);
+          
+          const tursoStatements = items.map((p: any) => {
+            const name = p.name ?? p.description ?? "";
+            const isBackorder = name.toLowerCase().includes("backorder") ? 1 : 0;
+            return {
+              sql: `INSERT INTO inventory (sku, sales_description, available, rrp, m2_per_box, pcs_per_box, box_per_pallet, backorder)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(sku) DO UPDATE SET
+                    sales_description = excluded.sales_description, available = excluded.available, rrp = excluded.rrp, m2_per_box = excluded.m2_per_box, pcs_per_box = excluded.pcs_per_box, box_per_pallet = excluded.box_per_pallet, backorder = excluded.backorder`,
+              args: [p.sku, name || null, p.stock ?? null, p.rrp ?? null, p.mpb ?? null, p.pcs ?? null, p.brp ?? null, isBackorder]
+            };
+          });
           for (let i = 0; i < tursoStatements.length; i += 100) {
             await tursoClient.batch(tursoStatements.slice(i, i + 100), "write");
+          }
+
+          // Post-process products max_stock and backorder
+          const chunkSize = 100;
+          for (let i = 0; i < skusToUpdate.length; i += chunkSize) {
+             const skuChunk = skusToUpdate.slice(i, i + chunkSize);
+             const placeholders = skuChunk.map(() => '?').join(',');
+             
+             // Find unique product_parent_ids
+             const res = await tursoClient.execute({
+                sql: `SELECT DISTINCT product_parent_id FROM inventory WHERE sku IN (${placeholders}) AND product_parent_id IS NOT NULL`,
+                args: skuChunk
+             });
+             const productIds = res.rows.map((r: any) => r.product_parent_id);
+
+             if (productIds.length > 0) {
+                const pPlaceholders = productIds.map(() => '?').join(',');
+                
+                // Aggregate max_stock and backorder
+                const aggRes = await tursoClient.execute({
+                   sql: `SELECT product_parent_id, 
+                                MAX(backorder) as has_backorder, 
+                                COALESCE(MAX(CASE WHEN backorder = 0 THEN available ELSE NULL END), 0) as max_stock 
+                         FROM inventory 
+                         WHERE product_parent_id IN (${pPlaceholders}) 
+                         GROUP BY product_parent_id`,
+                   args: productIds
+                });
+                
+                // Fetch existing cht_and_gto_stock_status
+                const prodRes = await tursoClient.execute({
+                   sql: `SELECT product_id, cht_and_gto_stock_status FROM products WHERE product_id IN (${pPlaceholders})`,
+                   args: productIds
+                });
+                
+                const productMap = new Map();
+                for (const row of prodRes.rows) {
+                   let status = { force_in_stock: false, backorder: false, max_stock: 0 };
+                   if (row.cht_and_gto_stock_status) {
+                      try {
+                         const parsed = JSON.parse(row.cht_and_gto_stock_status as string);
+                         if (parsed && typeof parsed === 'object') {
+                            status = { ...status, ...parsed };
+                         }
+                      } catch(e) {}
+                   }
+                   productMap.set(row.product_id, status);
+                }
+
+                // Prepare updates for products table
+                const updateStatements = [];
+                for (const row of aggRes.rows) {
+                   const pid = row.product_parent_id;
+                   const existingStatus = productMap.get(pid) || { force_in_stock: false, backorder: false, max_stock: 0 };
+                   existingStatus.backorder = row.has_backorder === 1;
+                   existingStatus.max_stock = row.max_stock || 0;
+                   
+                   updateStatements.push({
+                      sql: `UPDATE products SET cht_and_gto_stock_status = ? WHERE product_id = ?`,
+                      args: [JSON.stringify(existingStatus), pid]
+                   });
+                }
+                
+                if (updateStatements.length > 0) {
+                    await tursoClient.batch(updateStatements, "write");
+                }
+             }
           }
         } catch (e: any) {
           console.error("Turso dual-write error (POST sync):", e);
