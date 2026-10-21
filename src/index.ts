@@ -759,6 +759,20 @@ async function sendUpdatesToQueue(queue: any, site: string, updates: any[], batc
   }
 }
 
+async function recordApiTestData(db: any, table: string, data: any) {
+  if (!db) {
+    console.warn(`[api_test_db] Binding not found, skipped recording to ${table}`);
+    return;
+  }
+  try {
+    const jsonStr = typeof data === 'string' ? data : JSON.stringify(data);
+    const now = Date.now() / 1000;
+    await db.prepare(`INSERT INTO "${table}" (received_json, update_time) VALUES (?, ?)`).bind(jsonStr, now).run();
+  } catch (err: any) {
+    console.error(`[api_test_db] Failed to record test data into ${table}:`, err);
+  }
+}
+
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
@@ -1295,6 +1309,11 @@ export default {
         let data: any = await request.json();
         console.log("Received data from your soft:", data);
 
+        // Record incoming test data to api_test_db asynchronously without blocking or altering existing sync logic
+        if (env.api_test_db) {
+          ctx.waitUntil(recordApiTestData(env.api_test_db, 'inventory', data));
+        }
+
         // Extract array if it is wrapped in an 'updates' object
         let items = data.updates && Array.isArray(data.updates) ? data.updates : data;
 
@@ -1542,6 +1561,11 @@ export default {
         let data: any = await request.json();
         console.log(`Received data from ${url.pathname}:`, data);
         
+        const targetTable = url.pathname === '/proforma' ? 'pro_forma_invoce' : 'Invoice';
+        if (env.api_test_db) {
+          await recordApiTestData(env.api_test_db, targetTable, data);
+        }
+
         return new Response(JSON.stringify({
           response: {
             code: "200",

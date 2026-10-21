@@ -19,6 +19,11 @@
 			"binding": "tile_db",
 			"database_name": "stock_sync",
 			"database_id": "198f3657-69d9-4d01-8074-67472c4625eb"
+		},
+		{
+			"binding": "api_test_db",
+			"database_name": "api_test_db",
+			"database_id": "f53d659a-cccf-4c9a-9a22-48d403b54ca3"
 		}
 	],
 	// 1. 允许你的 Worker 往队列里扔数据 (生产者)
