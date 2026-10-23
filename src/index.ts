@@ -773,6 +773,222 @@ async function recordApiTestData(db: any, table: string, data: any) {
   }
 }
 
+async function upsertCustomer(cust: any): Promise<number | null> {
+  if (!cust || typeof cust !== 'object') return null;
+
+  const abn = (cust.abn ?? '').trim();
+  const company = (cust.company ?? '').trim();
+  const firstName = (cust.first_name ?? '').trim();
+  const lastName = (cust.last_name ?? '').trim();
+
+  if (!abn && !company && !firstName && !lastName) {
+    return null;
+  }
+
+  const contact = (cust.contact ?? '').trim();
+  const email = (cust.email ?? '').trim();
+  const tel1 = (cust.tel1 ?? '').trim();
+  const tel2 = (cust.tel2 ?? '').trim();
+  const street = (cust.street ?? '').trim();
+  const city = (cust.city ?? '').trim();
+  const state = (cust.state ?? '').trim();
+  const postcode = (cust.postcode ?? cust.postcde ?? '').trim();
+
+  try {
+    const existing = await tursoClient.execute({
+      sql: `SELECT customer_id, contact, email, tel1, tel2, street, city, state, postcode
+            FROM customer
+            WHERE COALESCE(abn, '') = ?
+              AND COALESCE(company, '') = ?
+              AND COALESCE(first_name, '') = ?
+              AND COALESCE(last_name, '') = ?
+            LIMIT 1`,
+      args: [abn, company, firstName, lastName]
+    });
+
+    if (existing.rows.length > 0) {
+      const row: any = existing.rows[0];
+      const customerId = Number(row.customer_id);
+
+      const rowContact = (row.contact ?? '').trim();
+      const rowEmail = (row.email ?? '').trim();
+      const rowTel1 = (row.tel1 ?? '').trim();
+      const rowTel2 = (row.tel2 ?? '').trim();
+      const rowStreet = (row.street ?? '').trim();
+      const rowCity = (row.city ?? '').trim();
+      const rowState = (row.state ?? '').trim();
+      const rowPostcode = (row.postcode ?? '').trim();
+
+      if (
+        rowContact !== contact ||
+        rowEmail !== email ||
+        rowTel1 !== tel1 ||
+        rowTel2 !== tel2 ||
+        rowStreet !== street ||
+        rowCity !== city ||
+        rowState !== state ||
+        rowPostcode !== postcode
+      ) {
+        await tursoClient.execute({
+          sql: `UPDATE customer
+                SET contact = ?, email = ?, tel1 = ?, tel2 = ?, street = ?, city = ?, state = ?, postcode = ?
+                WHERE customer_id = ?`,
+          args: [contact, email, tel1, tel2, street, city, state, postcode, customerId]
+        });
+      }
+      return customerId;
+    } else {
+      const insertRes = await tursoClient.execute({
+        sql: `INSERT INTO customer (abn, company, first_name, last_name, contact, email, tel1, tel2, street, city, state, postcode)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING customer_id`,
+        args: [abn, company, firstName, lastName, contact, email, tel1, tel2, street, city, state, postcode]
+      });
+      return Number(insertRes.rows[0].customer_id);
+    }
+  } catch (err: any) {
+    console.error("Error upserting customer into Turso:", err);
+    return null;
+  }
+}
+
+async function processInvoiceData(data: any): Promise<void> {
+  let items = data.updates && Array.isArray(data.updates) ? data.updates : data;
+  if (!Array.isArray(items)) {
+    items = [items];
+  }
+
+  const customerCache = new Map<string, number | null>();
+
+  for (const inv of items) {
+    if (!inv || typeof inv !== 'object') continue;
+
+    const invoiceNo = (inv.invoice_no ?? '').trim();
+    if (!invoiceNo) continue;
+
+    try {
+      // 1. Check if invoice_no already exists in `invoice`
+      const existingInv = await tursoClient.execute({
+        sql: `SELECT invoice_id FROM invoice WHERE invoice_no = ? LIMIT 1`,
+        args: [invoiceNo]
+      });
+      if (existingInv.rows.length > 0) {
+        console.log(`Invoice ${invoiceNo} already exists, skipping.`);
+        continue;
+      }
+
+      // 2. Process customer
+      let customerId: number | null = null;
+      const cust = inv.customer;
+      if (cust) {
+        const custKey = `${(cust.abn ?? '').trim()}|${(cust.company ?? '').trim()}|${(cust.first_name ?? '').trim()}|${(cust.last_name ?? '').trim()}`;
+        if (customerCache.has(custKey)) {
+          customerId = customerCache.get(custKey)!;
+        } else {
+          customerId = await upsertCustomer(cust);
+          customerCache.set(custKey, customerId);
+        }
+      }
+
+      // 3. Process sales items
+      const saleItemIds: number[] = [];
+      const rawItems = Array.isArray(inv.Items) ? inv.Items : [];
+      const customerCompany = (cust?.company ?? '').trim();
+      const invoiceDate = (inv.invoice_date ?? '').trim();
+
+      for (const item of rawItems) {
+        if (!item || typeof item !== 'object') continue;
+        const sku = (item.sku ?? '').trim();
+        if (!sku) continue;
+
+        const existingSale = await tursoClient.execute({
+          sql: `SELECT id FROM sales WHERE invoice_no = ? AND sku = ? LIMIT 1`,
+          args: [invoiceNo, sku]
+        });
+
+        if (existingSale.rows.length > 0) {
+          saleItemIds.push(Number(existingSale.rows[0].id));
+        } else {
+          const description = (item.description ?? '').trim();
+          const qty = typeof item.qty === 'number' ? item.qty : (parseFloat(item.qty) || 0);
+          const totalExTax = typeof item.amount === 'number' ? item.amount : (parseFloat(item.amount) || 0);
+
+          const insertSale = await tursoClient.execute({
+            sql: `INSERT INTO sales (date, time, sales_person, customer, invoice_no, sku, description, qty, total_ex_tax, cost_ex_tax)
+                  VALUES (?, NULL, NULL, ?, ?, ?, ?, ?, ?, NULL) RETURNING id`,
+            args: [invoiceDate, customerCompany, invoiceNo, sku, description, qty, totalExTax]
+          });
+          saleItemIds.push(Number(insertSale.rows[0].id));
+        }
+      }
+
+      // 4. Insert into `invoice`
+      const proformaNo = (inv.proforma_invoice_no ?? inv.pro_forma_invoice_no ?? '').trim();
+      await tursoClient.execute({
+        sql: `INSERT INTO invoice (invoice_no, invoice_date, proforma_invoice_no, customer_id, sale_item_ids)
+              VALUES (?, ?, ?, ?, ?)`,
+        args: [invoiceNo, invoiceDate, proformaNo, customerId, JSON.stringify(saleItemIds)]
+      });
+      console.log(`Invoice ${invoiceNo} successfully inserted into Turso.`);
+    } catch (err: any) {
+      console.error(`Failed to process invoice ${invoiceNo} to Turso:`, err);
+    }
+  }
+}
+
+async function processProformaData(data: any): Promise<void> {
+  let items = data.updates && Array.isArray(data.updates) ? data.updates : data;
+  if (!Array.isArray(items)) {
+    items = [items];
+  }
+
+  const customerCache = new Map<string, number | null>();
+
+  for (const prof of items) {
+    if (!prof || typeof prof !== 'object') continue;
+
+    const proformaNo = (prof.proforma_invoice_no ?? prof.pro_forma_invoice_no ?? '').trim();
+    if (!proformaNo) continue;
+
+    try {
+      // 1. Check if pro_forma_invoice_no already exists
+      const existingProf = await tursoClient.execute({
+        sql: `SELECT pro_forma_invoice_id FROM pro_forma_invoice WHERE pro_forma_invoice_no = ? LIMIT 1`,
+        args: [proformaNo]
+      });
+      if (existingProf.rows.length > 0) {
+        console.log(`Pro forma invoice ${proformaNo} already exists, skipping.`);
+        continue;
+      }
+
+      // 2. Process customer
+      let customerId: number | null = null;
+      const cust = prof.customer;
+      if (cust) {
+        const custKey = `${(cust.abn ?? '').trim()}|${(cust.company ?? '').trim()}|${(cust.first_name ?? '').trim()}|${(cust.last_name ?? '').trim()}`;
+        if (customerCache.has(custKey)) {
+          customerId = customerCache.get(custKey)!;
+        } else {
+          customerId = await upsertCustomer(cust);
+          customerCache.set(custKey, customerId);
+        }
+      }
+
+      // 3. Insert into `pro_forma_invoice` (sale_item_ids is NULL for proforma as Items are not saved to sales)
+      const invoiceDate = (prof.invoice_date ?? '').trim();
+      const quotationNo = (prof.quotation_invoice_no ?? '').trim();
+
+      await tursoClient.execute({
+        sql: `INSERT INTO pro_forma_invoice (invoice_date, quotation_invoice_no, customer_id, sale_item_ids, pro_forma_invoice_no)
+              VALUES (?, ?, ?, NULL, ?)`,
+        args: [invoiceDate, quotationNo, customerId, proformaNo]
+      });
+      console.log(`Pro forma invoice ${proformaNo} successfully inserted into Turso.`);
+    } catch (err: any) {
+      console.error(`Failed to process proforma ${proformaNo} to Turso:`, err);
+    }
+  }
+}
+
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
@@ -1564,6 +1780,12 @@ export default {
         const targetTable = url.pathname === '/proforma' ? 'pro_forma_invoce' : 'Invoice';
         if (env.api_test_db) {
           await recordApiTestData(env.api_test_db, targetTable, data);
+        }
+
+        if (url.pathname === '/invoice') {
+          ctx.waitUntil(processInvoiceData(data).catch(e => console.error("Turso process invoice error:", e)));
+        } else if (url.pathname === '/proforma') {
+          ctx.waitUntil(processProformaData(data).catch(e => console.error("Turso process proforma error:", e)));
         }
 
         return new Response(JSON.stringify({
