@@ -1612,15 +1612,58 @@ export default {
         try {
           const skusToUpdate: string[] = items.map((p: any) => p.sku);
 
+          const toNum = (val: any) => {
+            if (val === undefined || val === null || val === '') return null;
+            const n = Number(val);
+            return isNaN(n) ? null : n;
+          };
+
           const tursoStatements = items.map((p: any) => {
-            const name = p.name ?? p.description ?? "";
+            const name = (p.description ?? p.name ?? "").trim();
             const isBackorder = name.toLowerCase().includes("backorder") ? 1 : 0;
+            const m2PerBox = toNum(p.m2_box ?? p.mpb);
+            const pcsPerBox = toNum(p.pcs_box ?? p.pcs);
+            const boxPerPallet = toNum(p.box_pallet ?? p.brp);
+
             return {
-              sql: `INSERT INTO inventory (sku, sales_description, available, rrp, m2_per_box, pcs_per_box, box_per_pallet, backorder)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+              sql: `INSERT INTO inventory (
+                      sku, sales_description, available, holding, so_qty, total_qty, rrp,
+                      online_name, showtile_name, pallet_qty, box_qty,
+                      m2_per_box, pcs_per_box, box_per_pallet, backorder
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(sku) DO UPDATE SET
-                    sales_description = excluded.sales_description, available = excluded.available, rrp = excluded.rrp, m2_per_box = excluded.m2_per_box, pcs_per_box = excluded.pcs_per_box, box_per_pallet = excluded.box_per_pallet, backorder = excluded.backorder`,
-              args: [p.sku, name || null, p.stock ?? null, p.rrp ?? null, p.mpb ?? null, p.pcs ?? null, p.brp ?? null, isBackorder]
+                      sales_description = excluded.sales_description,
+                      available = excluded.available,
+                      holding = excluded.holding,
+                      so_qty = excluded.so_qty,
+                      total_qty = excluded.total_qty,
+                      rrp = excluded.rrp,
+                      online_name = excluded.online_name,
+                      showtile_name = excluded.showtile_name,
+                      pallet_qty = excluded.pallet_qty,
+                      box_qty = excluded.box_qty,
+                      m2_per_box = excluded.m2_per_box,
+                      pcs_per_box = excluded.pcs_per_box,
+                      box_per_pallet = excluded.box_per_pallet,
+                      backorder = excluded.backorder`,
+              args: [
+                p.sku,
+                name || null,
+                toNum(p.stock),
+                toNum(p.holding),
+                toNum(p.so_qty),
+                toNum(p.total_qty),
+                toNum(p.rrp),
+                p.online !== undefined && p.online !== null ? String(p.online).trim() : null,
+                p.showtile !== undefined && p.showtile !== null ? String(p.showtile).trim() : null,
+                toNum(p.pallet_qty),
+                toNum(p.box_qty),
+                m2PerBox,
+                pcsPerBox,
+                boxPerPallet,
+                isBackorder
+              ]
             };
           });
           for (let i = 0; i < tursoStatements.length; i += 100) {
