@@ -184,6 +184,17 @@ const ADMIN_HTML = `
                             } else {
                                 container.append('<div class="list-group-item text-muted">No results found</div>');
                             }
+                        }).fail(function(xhr) {
+                            const container = $('#'+suggestionsId);
+                            let errMsg = 'Search failed';
+                            if (xhr.responseJSON) {
+                                errMsg = xhr.responseJSON.error || errMsg;
+                                if (xhr.responseJSON.details) {
+                                    const d = typeof xhr.responseJSON.details === 'object' ? JSON.stringify(xhr.responseJSON.details) : xhr.responseJSON.details;
+                                    errMsg += ': ' + d;
+                                }
+                            }
+                            container.empty().show().append('<div class="list-group-item list-group-item-danger py-2" style="font-size:0.85rem;">' + $('<div>').text(errMsg).html() + '</div>');
                         });
                     }, 300);
                 });
@@ -803,8 +814,9 @@ async function pushShopifyInChunks(storeDomain: string, accessToken: string, loc
   let successCount = 0;
   let hasError = false;
   let lastErrorMsg = '';
-  const cleanDomain = storeDomain.replace(/^https?:\/\//, '').replace(/\/+$/, '');
-  const cleanLocId = locationId.replace(/^gid:\/\/shopify\/Location\//, '').trim();
+  const cleanDomain = (storeDomain || '').trim().replace(/^https?:\/\//i, '').split('/')[0].trim();
+  const cleanToken = (accessToken || '').trim();
+  const cleanLocId = (locationId || '').replace(/^gid:\/\/shopify\/Location\//, '').trim();
 
   for (let i = 0; i < payload.length; i += chunkSize) {
     const chunk = payload.slice(i, i + chunkSize);
@@ -832,7 +844,7 @@ async function pushShopifyInChunks(storeDomain: string, accessToken: string, loc
               method: 'POST',
               headers: {
                 'Content-Type': 'application/json',
-                'X-Shopify-Access-Token': accessToken,
+                'X-Shopify-Access-Token': cleanToken,
                 'User-Agent': 'Mozilla/5.0'
               },
               body: JSON.stringify(gql)
@@ -888,7 +900,7 @@ async function pushShopifyInChunks(storeDomain: string, accessToken: string, loc
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'X-Shopify-Access-Token': accessToken,
+            'X-Shopify-Access-Token': cleanToken,
             'User-Agent': 'Mozilla/5.0'
           },
           body: JSON.stringify(invMutation)
@@ -919,7 +931,7 @@ async function pushShopifyInChunks(storeDomain: string, accessToken: string, loc
             method: 'PUT',
             headers: {
               'Content-Type': 'application/json',
-              'X-Shopify-Access-Token': accessToken,
+              'X-Shopify-Access-Token': cleanToken,
               'User-Agent': 'Mozilla/5.0'
             },
             body: JSON.stringify({
@@ -1572,11 +1584,18 @@ export default {
           settingsRows.forEach((r: any) => settings[r.key] = r.value);
 
           if (!settings.shopify_store_domain || !settings.shopify_access_token) {
-            return new Response(JSON.stringify({ error: 'Shopify Store Domain or Access Token not configured' }), { status: 400 });
+            return new Response(JSON.stringify({ error: 'Shopify Store Domain or Access Token not configured in Settings' }), { status: 400 });
           }
 
-          const cleanDomain = settings.shopify_store_domain.replace(/^https?:\/\//, '').replace(/\/+$/, '');
-          const gqlQuery = {
+          const rawDomain = (settings.shopify_store_domain || '').trim();
+          const cleanDomain = rawDomain.replace(/^https?:\/\//i, '').split('/')[0].trim();
+          const cleanToken = (settings.shopify_access_token || '').trim();
+
+          const cleanKeyword = keyword.replace(/[:"\\]/g, ' ').trim();
+          const terms = cleanKeyword.split(/\s+/).filter(Boolean);
+          const queryParam = terms.length > 0 ? terms.map((t: string) => `${t}*`).join(' ') : '*';
+
+          const buildGql = (withInventoryItem: boolean) => ({
             query: `query searchProducts($query: String!) {
               products(first: 10, query: $query) {
                 nodes {
@@ -1586,34 +1605,88 @@ export default {
                     nodes {
                       id
                       title
-                      inventoryItem {
-                        id
-                      }
+                      ${withInventoryItem ? 'inventoryItem { id }' : ''}
                     }
                   }
                 }
               }
             }`,
-            variables: { query: keyword + "*" }
-          };
+            variables: { query: queryParam }
+          });
 
-          const sRes = await fetch(`https://${cleanDomain}/admin/api/2024-10/graphql.json`, {
+          let sRes = await fetch(`https://${cleanDomain}/admin/api/2024-10/graphql.json`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
-              'X-Shopify-Access-Token': settings.shopify_access_token,
+              'X-Shopify-Access-Token': cleanToken,
               'User-Agent': 'Mozilla/5.0'
             },
-            body: JSON.stringify(gqlQuery)
+            body: JSON.stringify(buildGql(true))
           });
+
+          // If querying inventoryItem resulted in 403 / Access Denied (user may only have read_products scope), retry without inventoryItem
+          if (!sRes.ok && sRes.status === 403) {
+            console.warn("Shopify returned 403 with inventoryItem, retrying without inventoryItem...");
+            const fallbackRes = await fetch(`https://${cleanDomain}/admin/api/2024-10/graphql.json`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'X-Shopify-Access-Token': cleanToken,
+                'User-Agent': 'Mozilla/5.0'
+              },
+              body: JSON.stringify(buildGql(false))
+            });
+            if (fallbackRes.ok) {
+              sRes = fallbackRes;
+            }
+          }
 
           if (!sRes.ok) {
             const errText = await sRes.text();
-            console.error("Shopify GraphQL search error:", errText);
-            return new Response(JSON.stringify({ error: `Shopify API error: ${sRes.status} ${sRes.statusText}` }), { status: 502 });
+            console.error("Shopify GraphQL search error:", sRes.status, errText);
+            return new Response(JSON.stringify({ 
+              error: `Shopify API error: ${sRes.status} ${sRes.statusText}`,
+              details: errText 
+            }), { 
+              status: 502, 
+              headers: { 'Content-Type': 'application/json' } 
+            });
           }
 
-          const sJson: any = await sRes.json();
+          let sJson: any = await sRes.json();
+          if (sJson.errors && sJson.errors.length > 0) {
+            const isInvItemError = sJson.errors.some((e: any) => (e.message || '').includes('inventoryItem'));
+            if (isInvItemError) {
+              const fallbackRes = await fetch(`https://${cleanDomain}/admin/api/2024-10/graphql.json`, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'X-Shopify-Access-Token': cleanToken,
+                  'User-Agent': 'Mozilla/5.0'
+                },
+                body: JSON.stringify(buildGql(false))
+              });
+              if (fallbackRes.ok) {
+                const fbJson: any = await fallbackRes.json();
+                if (!fbJson.errors || fbJson.errors.length === 0) {
+                  sJson = fbJson;
+                }
+              }
+            }
+          }
+
+          if (sJson.errors && sJson.errors.length > 0) {
+            console.error("Shopify GraphQL search errors:", sJson.errors);
+            const msg = sJson.errors.map((e: any) => e.message).join('; ');
+            return new Response(JSON.stringify({ 
+              error: `Shopify GraphQL error: ${msg}`,
+              details: sJson.errors 
+            }), { 
+              status: 502, 
+              headers: { 'Content-Type': 'application/json' } 
+            });
+          }
+
           const list: any[] = [];
           const products = sJson?.data?.products?.nodes || [];
 
