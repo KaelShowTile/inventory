@@ -810,6 +810,18 @@ async function sendUpdatesToQueue(queue: any, site: string, updates: any[], batc
   }
 }
 
+function calculateShopifyStock(rawStock: number | string | null | undefined, suffix?: string | null, m2PerBox?: number | string | null): number {
+  const cleanSuffix = String(suffix || '').trim().toLowerCase();
+  const validStock = Math.max(0, Number(rawStock) || 0);
+  if (cleanSuffix === 'm2') {
+    const boxSize = Number(m2PerBox);
+    if (boxSize > 0) {
+      return Math.floor(validStock / boxSize);
+    }
+  }
+  return Math.floor(validStock);
+}
+
 async function pushShopifyInChunks(storeDomain: string, accessToken: string, locationId: string, payload: any[], db: any, chunkSize: number = 50) {
   let successCount = 0;
   let hasError = false;
@@ -1810,9 +1822,35 @@ export default {
           });
           const parentId = parentRow.rows[0]?.product_parent_id;
           if (parentId) {
+            const curRes = await tursoClient.execute({
+              sql: `SELECT cht_and_gto_stock_status, suffix, m2_per_box FROM products WHERE product_id = ?`,
+              args: [parentId]
+            });
+            let statusObj: any = { force_in_stock: false, backorder: false, max_stock: 0, shopify_stock: 0 };
+            if (curRes.rows[0]?.cht_and_gto_stock_status) {
+              try {
+                statusObj = { ...statusObj, ...JSON.parse(curRes.rows[0].cht_and_gto_stock_status as string) };
+              } catch (e) {}
+            }
+            statusObj.force_in_stock = !!body.force_in_stock;
+            const suffix = curRes.rows[0]?.suffix as string;
+            const m2PerBox = curRes.rows[0]?.m2_per_box as number;
+            statusObj.shopify_stock = calculateShopifyStock(statusObj.max_stock, suffix, m2PerBox);
+
             await tursoClient.execute({
-              sql: `UPDATE products SET cht_shopify_id = ?, cht_shopify_name = ? WHERE product_id = ?`,
-              args: [body.cht_shopify_product_id || null, body.cht_shopify_product_name || null, parentId]
+              sql: `UPDATE products 
+                    SET cht_shopify_id = ?, 
+                        cht_shopify_name = ?, 
+                        cht_shopify_inventory_item_id = ?,
+                        cht_and_gto_stock_status = ? 
+                    WHERE product_id = ?`,
+              args: [
+                body.cht_shopify_product_id || null, 
+                body.cht_shopify_product_name || null, 
+                body.cht_shopify_inventory_item_id || null,
+                JSON.stringify(statusObj),
+                parentId
+              ]
             });
           }
         } catch (te: any) {
@@ -1933,11 +1971,61 @@ export default {
           }
         }
 
-        // Sync CHT Shopify
+        // Sync CHT Shopify (Turso first with unit suffix/m2_per_box rules, fallback to D1 during transition)
         if (settings.shopify_store_domain && settings.shopify_access_token && settings.shopify_location_id) {
-          const { results: shopifyData } = await env.tile_db.prepare("SELECT cht_shopify_product_id as id, cht_shopify_inventory_item_id as inventory_item_id, MAX(CAST(stock AS REAL)) as stock, MAX(backorder) as backorder, MAX(force_in_stock) as force_in_stock FROM products WHERE cht_shopify_product_id IS NOT NULL GROUP BY cht_shopify_product_id").all();
-          if (shopifyData.length > 0) {
-            const payload = shopifyData.map((r: any) => ({ id: r.id, inventory_item_id: r.inventory_item_id, stock: r.stock, backorder: !!r.backorder, force_in_stock: !!r.force_in_stock }));
+          let payload: any[] = [];
+
+          // 1. Try querying Turso products (using suffix and m2_per_box rules)
+          try {
+            const tursoShopifyRes = await tursoClient.execute({
+              sql: `SELECT p.product_id, p.cht_shopify_id as id, p.cht_shopify_inventory_item_id as inventory_item_id,
+                           p.m2_per_box, p.suffix, p.cht_and_gto_stock_status,
+                           COALESCE(MAX(CASE WHEN inv.backorder = 0 THEN inv.available ELSE NULL END), 0) as max_stock,
+                           MAX(inv.backorder) as has_backorder
+                    FROM products p
+                    LEFT JOIN inventory inv ON inv.product_parent_id = p.product_id
+                    WHERE p.cht_shopify_id IS NOT NULL AND TRIM(p.cht_shopify_id) != ''
+                    GROUP BY p.product_id`
+            });
+
+            if (tursoShopifyRes.rows.length > 0) {
+              payload = tursoShopifyRes.rows.map((r: any) => {
+                const stock = calculateShopifyStock(r.max_stock, r.suffix, r.m2_per_box);
+                let forceInStock = false;
+                if (r.cht_and_gto_stock_status) {
+                  try {
+                    const parsed = JSON.parse(r.cht_and_gto_stock_status as string);
+                    if (parsed && parsed.force_in_stock) forceInStock = true;
+                  } catch (e) {}
+                }
+                return {
+                  id: r.id,
+                  inventory_item_id: r.inventory_item_id || null,
+                  stock,
+                  backorder: r.has_backorder === 1,
+                  force_in_stock: forceInStock
+                };
+              });
+            }
+          } catch (te: any) {
+            console.error("Turso fetch shopify products error (sync-websites):", te);
+          }
+
+          // 2. Fallback to D1 products table during transition if Turso has no mapped products
+          if (payload.length === 0) {
+            const { results: shopifyData } = await env.tile_db.prepare("SELECT cht_shopify_product_id as id, cht_shopify_inventory_item_id as inventory_item_id, MAX(CAST(stock AS REAL)) as stock, MAX(backorder) as backorder, MAX(force_in_stock) as force_in_stock FROM products WHERE cht_shopify_product_id IS NOT NULL GROUP BY cht_shopify_product_id").all();
+            if (shopifyData.length > 0) {
+              payload = shopifyData.map((r: any) => ({
+                id: r.id,
+                inventory_item_id: r.inventory_item_id,
+                stock: Math.max(0, Math.floor(Number(r.stock) || 0)),
+                backorder: !!r.backorder,
+                force_in_stock: !!r.force_in_stock
+              }));
+            }
+          }
+
+          if (payload.length > 0) {
             const res = await pushShopifyInChunks(settings.shopify_store_domain, settings.shopify_access_token, settings.shopify_location_id, payload, env.tile_db);
             resultsObj.cht_shopify = { status: res.hasError ? 207 : 200, ok: res.ok, updated: res.updated, error: res.error };
           } else {
@@ -2132,6 +2220,8 @@ export default {
 
           // Post-process products max_stock and backorder
           const chunkSize = 100;
+          const tursoShopifyUpdates: any[] = [];
+
           for (let i = 0; i < skusToUpdate.length; i += chunkSize) {
             const skuChunk = skusToUpdate.slice(i, i + chunkSize);
             const placeholders = skuChunk.map(() => '?').join(',');
@@ -2157,15 +2247,15 @@ export default {
                 args: productIds
               });
 
-              // Fetch existing cht_and_gto_stock_status
+              // Fetch existing product details including suffix, m2_per_box, and shopify mappings
               const prodRes = await tursoClient.execute({
-                sql: `SELECT product_id, cht_and_gto_stock_status FROM products WHERE product_id IN (${pPlaceholders})`,
+                sql: `SELECT product_id, suffix, m2_per_box, cht_shopify_id, cht_shopify_inventory_item_id, cht_and_gto_stock_status FROM products WHERE product_id IN (${pPlaceholders})`,
                 args: productIds
               });
 
               const productMap = new Map();
               for (const row of prodRes.rows) {
-                let status = { force_in_stock: false, backorder: false, max_stock: 0 };
+                let status: any = { force_in_stock: false, backorder: false, max_stock: 0, shopify_stock: 0 };
                 if (row.cht_and_gto_stock_status) {
                   try {
                     const parsed = JSON.parse(row.cht_and_gto_stock_status as string);
@@ -2174,21 +2264,53 @@ export default {
                     }
                   } catch (e) { }
                 }
-                productMap.set(row.product_id, status);
+                productMap.set(row.product_id, {
+                  status,
+                  suffix: row.suffix,
+                  m2_per_box: row.m2_per_box,
+                  cht_shopify_id: row.cht_shopify_id,
+                  cht_shopify_inventory_item_id: row.cht_shopify_inventory_item_id
+                });
               }
 
               // Prepare updates for products table
               const updateStatements = [];
               for (const row of aggRes.rows) {
                 const pid = row.product_parent_id;
-                const existingStatus = productMap.get(pid) || { force_in_stock: false, backorder: false, max_stock: 0 };
-                existingStatus.backorder = row.has_backorder === 1;
-                existingStatus.max_stock = row.max_stock || 0;
+                const prodInfo = productMap.get(pid);
+                if (!prodInfo) continue;
+
+                const existingStatus = prodInfo.status;
+                const oldShopifyStock = existingStatus.shopify_stock;
+                const oldBackorder = existingStatus.backorder;
+                const oldForceInStock = existingStatus.force_in_stock;
+
+                const rawStock = Number(row.max_stock) || 0;
+                const hasBackorder = row.has_backorder === 1;
+                const newShopifyStock = calculateShopifyStock(rawStock, prodInfo.suffix, prodInfo.m2_per_box);
+
+                existingStatus.backorder = hasBackorder;
+                existingStatus.max_stock = rawStock;
+                existingStatus.shopify_stock = newShopifyStock;
 
                 updateStatements.push({
                   sql: `UPDATE products SET cht_and_gto_stock_status = ? WHERE product_id = ?`,
                   args: [JSON.stringify(existingStatus), pid]
                 });
+
+                if (prodInfo.cht_shopify_id) {
+                  const policyChanged = (oldBackorder !== existingStatus.backorder) || (oldForceInStock !== existingStatus.force_in_stock);
+                  const stockChanged = oldShopifyStock !== newShopifyStock;
+                  if (policyChanged || stockChanged) {
+                    tursoShopifyUpdates.push({
+                      id: prodInfo.cht_shopify_id,
+                      inventory_item_id: prodInfo.cht_shopify_inventory_item_id || null,
+                      stock: newShopifyStock,
+                      backorder: existingStatus.backorder,
+                      force_in_stock: !!existingStatus.force_in_stock
+                    });
+                  }
+                }
               }
 
               if (updateStatements.length > 0) {
@@ -2246,8 +2368,9 @@ export default {
         }
 
         // 4. Auto-push to websites if there are changes
-        let pushResults = { cht_pushed: chtUpdates.length, gto_pushed: gtoUpdates.length, shopify_pushed: shopifyUpdates.length };
-        if (chtUpdates.length > 0 || gtoUpdates.length > 0 || shopifyUpdates.length > 0) {
+        const finalShopifyUpdates = tursoShopifyUpdates.length > 0 ? tursoShopifyUpdates : shopifyUpdates;
+        let pushResults = { cht_pushed: chtUpdates.length, gto_pushed: gtoUpdates.length, shopify_pushed: finalShopifyUpdates.length };
+        if (chtUpdates.length > 0 || gtoUpdates.length > 0 || finalShopifyUpdates.length > 0) {
           const { results: settingsRows } = await env.tile_db.prepare("SELECT * FROM settings").all();
           const settings: any = {};
           settingsRows.forEach((r: any) => settings[r.key] = r.value);
@@ -2261,8 +2384,8 @@ export default {
             ctx.waitUntil(sendUpdatesToQueue(env.STOCK_QUEUE, 'gto', gtoUpdates).catch(e => console.error("Auto GTO Queue Error:", e)));
           }
 
-          if (shopifyUpdates.length > 0 && env.STOCK_QUEUE) {
-            ctx.waitUntil(sendUpdatesToQueue(env.STOCK_QUEUE, 'cht_shopify', shopifyUpdates).catch(e => console.error("Auto Shopify Queue Error:", e)));
+          if (finalShopifyUpdates.length > 0 && env.STOCK_QUEUE) {
+            ctx.waitUntil(sendUpdatesToQueue(env.STOCK_QUEUE, 'cht_shopify', finalShopifyUpdates).catch(e => console.error("Auto Shopify Queue Error:", e)));
           }
         }
 
