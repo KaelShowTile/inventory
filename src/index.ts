@@ -52,6 +52,7 @@ const ADMIN_HTML = `
                     <th>Update Date</th>
                     <th class="large-col">CHT Name</th>
                     <th class="large-col">GTO Name</th>
+                    <th class="large-col">CHT Shopify Name</th>
                     <th class="button-col">Action</th>
                 </tr>
             </thead>
@@ -83,7 +84,14 @@ const ADMIN_HTML = `
                             <input type="text" class="form-control" id="gtoSearch" autocomplete="off" placeholder="Search GTO product...">
                             <input type="hidden" id="gtoId">
                             <div id="gtoSuggestions" class="list-group position-absolute w-100 shadow" style="z-index: 1000; display: none; max-height: 200px; overflow-y: auto;"></div>
-                    </div>
+                        </div>
+                        <div class="mb-3 position-relative">
+                            <label class="form-label">CHT Shopify Variant Mapping</label>
+                            <input type="text" class="form-control" id="shopifySearch" autocomplete="off" placeholder="Search Shopify product or variant...">
+                            <input type="hidden" id="shopifyId">
+                            <input type="hidden" id="shopifyInventoryItemId">
+                            <div id="shopifySuggestions" class="list-group position-absolute w-100 shadow" style="z-index: 1000; display: none; max-height: 200px; overflow-y: auto;"></div>
+                        </div>
                     <div class="mb-3 form-check">
                         <input type="checkbox" class="form-check-input" id="backorderCheck">
                         <label class="form-check-label" for="backorderCheck">Backorder is available</label>
@@ -132,8 +140,9 @@ const ADMIN_HTML = `
                         render: function(data) { return data ? '<input type="checkbox" disabled checked>' : '<input type="checkbox" disabled>'; }
                     },
                     { data: 'updated_at' },
-                    { data: 'cht_product_name' },
-                    { data: 'gto_product_name' },
+                    { data: 'cht_product_name', defaultContent: '' },
+                    { data: 'gto_product_name', defaultContent: '' },
+                    { data: 'cht_shopify_product_name', defaultContent: '' },
                     { 
                         data: null,
                         render: function(data, type, row) {
@@ -143,6 +152,9 @@ const ADMIN_HTML = `
                                    'data-cht-name="'+(row.cht_product_name || '')+'" ' +
                                    'data-gto-id="'+(row.gto_product_id || '')+'" ' +
                                    'data-gto-name="'+(row.gto_product_name || '')+'" ' +
+                                   'data-shopify-id="'+(row.cht_shopify_product_id || '')+'" ' +
+                                   'data-shopify-name="'+(row.cht_shopify_product_name || '')+'" ' +
+                                   'data-shopify-inventory-item-id="'+(row.cht_shopify_inventory_item_id || '')+'" ' +
                                    'data-backorder="'+(row.backorder ? 1 : 0)+'" ' +
                                    'data-force-in-stock="'+(row.force_in_stock ? 1 : 0)+'">Edit</button>' +
                                    '<button class="btn btn-sm btn-danger delete-btn ms-1" data-sku="'+row.sku+'">Delete</button>';
@@ -152,10 +164,11 @@ const ADMIN_HTML = `
             });
             
             // Autocomplete Setup
-            function setupAutocomplete(site, searchInputId, idInputId, suggestionsId) {
+            function setupAutocomplete(site, searchInputId, idInputId, suggestionsId, extraDataInputId) {
                 let timer;
                 $('#'+searchInputId).on('input', function() {
                     $('#'+idInputId).val(''); // Clear ID if user starts typing manually to prevent saving invalid mappings
+                    if (extraDataInputId) $('#'+extraDataInputId).val('');
                     clearTimeout(timer);
                     const keyword = $(this).val();
                     if(keyword.length < 2) { $('#'+suggestionsId).hide(); return; }
@@ -166,7 +179,7 @@ const ADMIN_HTML = `
                             container.empty().show();
                             if(res.data && res.data.length > 0) {
                                 res.data.forEach(item => {
-                                    container.append('<button type="button" class="list-group-item list-group-item-action" data-id="'+item.id+'" data-name="'+item.name.replace(/"/g, '&quot;')+'">'+item.name+'</button>');
+                                    container.append('<button type="button" class="list-group-item list-group-item-action" data-id="'+item.id+'" data-name="'+item.name.replace(/"/g, '&quot;')+'" data-inventory-item-id="'+(item.inventory_item_id || '')+'">'+item.name+'</button>');
                                 });
                             } else {
                                 container.append('<div class="list-group-item text-muted">No results found</div>');
@@ -178,6 +191,7 @@ const ADMIN_HTML = `
                 $('#'+suggestionsId).on('click', '.list-group-item-action', function() {
                     $('#'+searchInputId).val($(this).data('name'));
                     $('#'+idInputId).val($(this).data('id'));
+                    if (extraDataInputId) $('#'+extraDataInputId).val($(this).data('inventory-item-id'));
                     $('#'+suggestionsId).hide();
                 });
 
@@ -188,6 +202,7 @@ const ADMIN_HTML = `
 
             setupAutocomplete('cht', 'chtSearch', 'chtId', 'chtSuggestions');
             setupAutocomplete('gto', 'gtoSearch', 'gtoId', 'gtoSuggestions');
+            setupAutocomplete('cht_shopify', 'shopifySearch', 'shopifyId', 'shopifySuggestions', 'shopifyInventoryItemId');
 
             // Open Modal
             const editModalEl = document.getElementById('editModal');
@@ -200,9 +215,12 @@ const ADMIN_HTML = `
                 $('#chtId').val($(this).data('cht-id'));
                 $('#gtoSearch').val($(this).data('gto-name'));
                 $('#gtoId').val($(this).data('gto-id'));
+                $('#shopifySearch').val($(this).data('shopify-name'));
+                $('#shopifyId').val($(this).data('shopify-id'));
+                $('#shopifyInventoryItemId').val($(this).data('shopify-inventory-item-id'));
                 $('#backorderCheck').prop('checked', $(this).data('backorder') == 1);
                 $('#forceInStockCheck').prop('checked', $(this).data('force-in-stock') == 1);
-                $('#chtSuggestions, #gtoSuggestions').hide();
+                $('#chtSuggestions, #gtoSuggestions, #shopifySuggestions').hide();
                 editModal.show();
             });
 
@@ -216,6 +234,9 @@ const ADMIN_HTML = `
                     cht_product_name: $('#chtId').val() ? $('#chtSearch').val() : null, // Only save name if a valid ID is selected
                     gto_product_id: $('#gtoId').val() || null,
                     gto_product_name: $('#gtoId').val() ? $('#gtoSearch').val() : null,
+                    cht_shopify_product_id: $('#shopifyId').val() || null,
+                    cht_shopify_product_name: $('#shopifyId').val() ? $('#shopifySearch').val() : null,
+                    cht_shopify_inventory_item_id: $('#shopifyId').val() ? ($('#shopifyInventoryItemId').val() || null) : null,
                     backorder: $('#backorderCheck').is(':checked'),
                     force_in_stock: $('#forceInStockCheck').is(':checked')
                 };
@@ -248,7 +269,8 @@ const ADMIN_HTML = `
                     success: function(res) {
                         let msg = 'Sync completed!\\n\\n';
                         if (res.details.cht) msg += 'CHT: ' + (res.details.cht.ok ? 'Success (' + res.details.cht.updated + ' products updated)' : 'Failed: ' + (res.details.cht.error || 'Skipped')) + '\\n';
-                        if (res.details.gto) msg += 'GTO: ' + (res.details.gto.ok ? 'Success (' + res.details.gto.updated + ' products updated)' : 'Failed: ' + (res.details.gto.error || 'Skipped'));
+                        if (res.details.gto) msg += 'GTO: ' + (res.details.gto.ok ? 'Success (' + res.details.gto.updated + ' products updated)' : 'Failed: ' + (res.details.gto.error || 'Skipped')) + '\\n';
+                        if (res.details.cht_shopify) msg += 'CHT Shopify: ' + (res.details.cht_shopify.ok ? 'Success (' + res.details.cht_shopify.updated + ' variants updated)' : 'Failed: ' + (res.details.cht_shopify.error || 'Skipped'));
                         alert(msg);
                     },
                     error: function(err) {
@@ -349,6 +371,22 @@ const SETTINGS_HTML = `
                 </div>
             </div>
 
+            <h5 class="mt-4 pb-2">CHT Shopify API</h5>
+            <div class="row mb-3">
+                <div class="col-md-6">
+                    <label class="form-label">Shopify Store Domain</label>
+                    <input type="text" class="form-control" name="shopify_store_domain" placeholder="your-store.myshopify.com">
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label">Admin API Access Token</label>
+                    <input type="password" class="form-control" name="shopify_access_token" placeholder="shpat_...">
+                </div>
+                <div class="col-md-6 mt-3">
+                    <label class="form-label">Location ID</label>
+                    <input type="text" class="form-control" name="shopify_location_id" placeholder="e.g. 89234567890">
+                </div>
+            </div>
+
             <button type="submit" class="btn btn-primary mt-3" id="saveBtn">Save Settings</button>
         </form>
 
@@ -398,9 +436,9 @@ const SETTINGS_HTML = `
                 btn.prop('disabled', true).text('Exporting...');
                 $.get('/api/products', function(res) {
                     if(!res.data || res.data.length === 0) { alert('No products to export.'); btn.prop('disabled', false).text('Export CSV'); return; }
-                    const fields = ['sku', 'name', 'stock', 'rrp', 'mpb', 'pcs', 'brp', 'updated_at', 'cht_product_id', 'cht_product_name', 'gto_product_id', 'gto_product_name'];
+                    const fields = ['sku', 'name', 'stock', 'rrp', 'mpb', 'pcs', 'brp', 'updated_at', 'cht_product_id', 'cht_product_name', 'gto_product_id', 'gto_product_name', 'cht_shopify_product_id', 'cht_shopify_product_name'];
                     const csv = Papa.unparse({
-                        fields: ['SKU', 'Name', 'Stock', 'RRP', 'MPB', 'PCS', 'BRP', 'Update Date', 'CHT Product ID', 'CHT Product Name', 'GTO Product ID', 'GTO Product Name'],
+                        fields: ['SKU', 'Name', 'Stock', 'RRP', 'MPB', 'PCS', 'BRP', 'Update Date', 'CHT Product ID', 'CHT Product Name', 'GTO Product ID', 'GTO Product Name', 'CHT Shopify Product ID', 'CHT Shopify Product Name'],
                         data: res.data.map(row => fields.map(f => row[f]))
                     });
                     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
@@ -429,7 +467,9 @@ const SETTINGS_HTML = `
                             pcs: row['PCS'] ? parseInt(row['PCS']) : null,
                             brp: row['BRP'] ? parseFloat(row['BRP']) : null,
                             cht_product_id: row['CHT Product ID'] ? parseInt(row['CHT Product ID']) : null,
-                            gto_product_id: row['GTO Product ID'] ? parseInt(row['GTO Product ID']) : null
+                            gto_product_id: row['GTO Product ID'] ? parseInt(row['GTO Product ID']) : null,
+                            cht_shopify_product_id: row['CHT Shopify Product ID'] ? String(row['CHT Shopify Product ID']).trim() : null,
+                            cht_shopify_product_name: row['CHT Shopify Product Name'] ? String(row['CHT Shopify Product Name']).trim() : null
                         })).filter(item => item.sku); // SKU is mandatory
 
                         if(data.length === 0) { alert('No valid rows found in CSV.'); $('#importCsvBtn').prop('disabled', false).text('Import CSV'); $('#csvFileInput').val(''); return; }
@@ -757,6 +797,169 @@ async function sendUpdatesToQueue(queue: any, site: string, updates: any[], batc
     const messages = chunk.map(update => ({ body: { site, update } }));
     await queue.sendBatch(messages);
   }
+}
+
+async function pushShopifyInChunks(storeDomain: string, accessToken: string, locationId: string, payload: any[], db: any, chunkSize: number = 50) {
+  let successCount = 0;
+  let hasError = false;
+  let lastErrorMsg = '';
+  const cleanDomain = storeDomain.replace(/^https?:\/\//, '').replace(/\/+$/, '');
+  const cleanLocId = locationId.replace(/^gid:\/\/shopify\/Location\//, '').trim();
+
+  for (let i = 0; i < payload.length; i += chunkSize) {
+    const chunk = payload.slice(i, i + chunkSize);
+    const logDetails: any = { chunk, results: [] };
+
+    try {
+      const quantitiesToSet: any[] = [];
+      const variantsToUpdatePolicy: any[] = [];
+
+      for (const item of chunk) {
+        let invItemId = item.inventory_item_id;
+        const vId = String(item.id).replace(/^gid:\/\/shopify\/ProductVariant\//, '').trim();
+
+        if (!invItemId) {
+          try {
+            const gql = {
+              query: `query getVariantInvItem($id: ID!) {
+                productVariant(id: $id) {
+                  inventoryItem { id }
+                }
+              }`,
+              variables: { id: `gid://shopify/ProductVariant/${vId}` }
+            };
+            const fRes = await fetch(`https://${cleanDomain}/admin/api/2024-10/graphql.json`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'X-Shopify-Access-Token': accessToken,
+                'User-Agent': 'Mozilla/5.0'
+              },
+              body: JSON.stringify(gql)
+            });
+            if (fRes.ok) {
+              const fJson: any = await fRes.json();
+              const fullInvId = fJson?.data?.productVariant?.inventoryItem?.id;
+              if (fullInvId) {
+                invItemId = fullInvId.split('/').pop();
+              }
+            }
+          } catch (e: any) {
+            console.error(`Failed to resolve inventory item for variant ${vId}:`, e);
+          }
+        }
+
+        if (invItemId) {
+          const cleanInvItemId = String(invItemId).replace(/^gid:\/\/shopify\/InventoryItem\//, '').trim();
+          quantitiesToSet.push({
+            inventoryItemId: `gid://shopify/InventoryItem/${cleanInvItemId}`,
+            locationId: `gid://shopify/Location/${cleanLocId}`,
+            quantity: Math.max(0, Math.round(Number(item.stock) || 0))
+          });
+        }
+
+        variantsToUpdatePolicy.push({
+          id: vId,
+          policy: (item.backorder || item.force_in_stock) ? 'continue' : 'deny'
+        });
+      }
+
+      if (quantitiesToSet.length > 0) {
+        const invMutation = {
+          query: `mutation inventorySetQuantities($input: InventorySetQuantitiesInput!) {
+            inventorySetQuantities(input: $input) {
+              userErrors {
+                field
+                message
+              }
+            }
+          }`,
+          variables: {
+            input: {
+              name: "available",
+              reason: "correction",
+              ignoreCompareQuantity: true,
+              quantities: quantitiesToSet
+            }
+          }
+        };
+
+        const mRes = await fetch(`https://${cleanDomain}/admin/api/2024-10/graphql.json`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Shopify-Access-Token': accessToken,
+            'User-Agent': 'Mozilla/5.0'
+          },
+          body: JSON.stringify(invMutation)
+        });
+
+        const mText = await mRes.text();
+        if (mRes.ok) {
+          const mJson: any = JSON.parse(mText);
+          const errors = mJson?.data?.inventorySetQuantities?.userErrors || [];
+          if (errors.length > 0) {
+            hasError = true;
+            lastErrorMsg = errors.map((e: any) => `${e.field?.join('.')}: ${e.message}`).join(' | ');
+            logDetails.results.push({ type: 'inventory', error: lastErrorMsg });
+          } else {
+            successCount += quantitiesToSet.length;
+            logDetails.results.push({ type: 'inventory', success: true, count: quantitiesToSet.length });
+          }
+        } else {
+          hasError = true;
+          lastErrorMsg = `HTTP ${mRes.status} ${mRes.statusText} - ${mText.substring(0, 150)}`;
+          logDetails.results.push({ type: 'inventory', error: lastErrorMsg });
+        }
+      }
+
+      for (const v of variantsToUpdatePolicy) {
+        try {
+          const pRes = await fetch(`https://${cleanDomain}/admin/api/2024-10/variants/${v.id}.json`, {
+            method: 'PUT',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-Shopify-Access-Token': accessToken,
+              'User-Agent': 'Mozilla/5.0'
+            },
+            body: JSON.stringify({
+              variant: {
+                id: v.id,
+                inventory_policy: v.policy
+              }
+            })
+          });
+          if (!pRes.ok) {
+            const errT = await pRes.text();
+            console.warn(`Shopify variant policy update failed for ${v.id}:`, errT);
+          }
+        } catch (err: any) {
+          console.warn(`Shopify variant policy exception for ${v.id}:`, err);
+        }
+      }
+
+      if (db) {
+        await db.prepare("INSERT INTO sync_logs (site, request_payload, response_payload) VALUES (?1, ?2, ?3)")
+          .bind('cht_shopify', JSON.stringify(chunk), JSON.stringify(logDetails))
+          .run();
+      }
+    } catch (e: any) {
+      hasError = true;
+      lastErrorMsg = e.message;
+      console.error(`Shopify sync chunk error:`, e);
+      if (db) {
+        await db.prepare("INSERT INTO sync_logs (site, request_payload, response_payload) VALUES (?1, ?2, ?3)")
+          .bind('cht_shopify', JSON.stringify(chunk), `Error: ${e.message}`)
+          .run();
+      }
+    }
+  }
+
+  if (db) {
+    await db.prepare("DELETE FROM sync_logs WHERE id NOT IN (SELECT id FROM sync_logs ORDER BY created_at DESC, id DESC LIMIT 100)").run();
+  }
+
+  return { ok: successCount > 0, updated: successCount, hasError, error: lastErrorMsg };
 }
 
 async function recordApiTestData(db: any, table: string, data: any) {
@@ -1112,9 +1315,10 @@ export default {
         if (!body.sku) return new Response(JSON.stringify({ error: 'SKU required' }), { status: 400 });
 
         // 1. Snapshot MAX stock BEFORE delete
-        const target = await env.tile_db.prepare("SELECT CAST(cht_product_id AS INTEGER) as cht_id, CAST(gto_product_id AS INTEGER) as gto_id FROM products WHERE sku = ?").bind(body.sku).first();
+        const target = await env.tile_db.prepare("SELECT CAST(cht_product_id AS INTEGER) as cht_id, CAST(gto_product_id AS INTEGER) as gto_id, cht_shopify_product_id, cht_shopify_inventory_item_id FROM products WHERE sku = ?").bind(body.sku).first();
         const preChtMap = new Map();
         const preGtoMap = new Map();
+        let preShopify: any = null;
         if (target) {
             if (target.cht_id) {
                const { results } = await env.tile_db.prepare("SELECT CAST(cht_product_id AS INTEGER) as id, MAX(CAST(stock AS REAL)) as max_stock, MAX(backorder) as backorder, MAX(force_in_stock) as force_in_stock FROM products WHERE CAST(cht_product_id AS INTEGER) = ? GROUP BY CAST(cht_product_id AS INTEGER)").bind(target.cht_id).all();
@@ -1123,6 +1327,10 @@ export default {
             if (target.gto_id) {
                const { results } = await env.tile_db.prepare("SELECT CAST(gto_product_id AS INTEGER) as id, MAX(CAST(stock AS REAL)) as max_stock, MAX(backorder) as backorder, MAX(force_in_stock) as force_in_stock FROM products WHERE CAST(gto_product_id AS INTEGER) = ? GROUP BY CAST(gto_product_id AS INTEGER)").bind(target.gto_id).all();
                results.forEach((r: any) => preGtoMap.set(r.id, { stock: r.max_stock, backorder: r.backorder, force_in_stock: r.force_in_stock }));
+            }
+            if (target.cht_shopify_product_id) {
+               const r = await env.tile_db.prepare("SELECT cht_shopify_product_id as id, cht_shopify_inventory_item_id as inventory_item_id, MAX(CAST(stock AS REAL)) as max_stock, MAX(backorder) as backorder, MAX(force_in_stock) as force_in_stock FROM products WHERE cht_shopify_product_id = ? GROUP BY cht_shopify_product_id").bind(target.cht_shopify_product_id).first();
+               if (r) preShopify = { id: r.id, inventory_item_id: r.inventory_item_id, stock: r.max_stock, backorder: r.backorder, force_in_stock: r.force_in_stock };
             }
         }
 
@@ -1133,6 +1341,7 @@ export default {
         // 3. Snapshot MAX stock AFTER delete
         const postChtMap = new Map();
         const postGtoMap = new Map();
+        let postShopify: any = null;
         if (target) {
             if (target.cht_id) {
                const { results } = await env.tile_db.prepare("SELECT CAST(cht_product_id AS INTEGER) as id, MAX(CAST(stock AS REAL)) as max_stock, MAX(backorder) as backorder, MAX(force_in_stock) as force_in_stock FROM products WHERE CAST(cht_product_id AS INTEGER) = ? GROUP BY CAST(cht_product_id AS INTEGER)").bind(target.cht_id).all();
@@ -1141,6 +1350,10 @@ export default {
             if (target.gto_id) {
                const { results } = await env.tile_db.prepare("SELECT CAST(gto_product_id AS INTEGER) as id, MAX(CAST(stock AS REAL)) as max_stock, MAX(backorder) as backorder, MAX(force_in_stock) as force_in_stock FROM products WHERE CAST(gto_product_id AS INTEGER) = ? GROUP BY CAST(gto_product_id AS INTEGER)").bind(target.gto_id).all();
                results.forEach((r: any) => postGtoMap.set(r.id, { stock: r.max_stock, backorder: r.backorder, force_in_stock: r.force_in_stock }));
+            }
+            if (target.cht_shopify_product_id) {
+               const r = await env.tile_db.prepare("SELECT cht_shopify_product_id as id, cht_shopify_inventory_item_id as inventory_item_id, MAX(CAST(stock AS REAL)) as max_stock, MAX(backorder) as backorder, MAX(force_in_stock) as force_in_stock FROM products WHERE cht_shopify_product_id = ? GROUP BY cht_shopify_product_id").bind(target.cht_shopify_product_id).first();
+               if (r) postShopify = { id: r.id, inventory_item_id: r.inventory_item_id, stock: r.max_stock, backorder: r.backorder, force_in_stock: r.force_in_stock };
             }
         }
 
@@ -1165,8 +1378,23 @@ export default {
           }
         }
 
+        const shopifyUpdates: any[] = [];
+        if (target && target.cht_shopify_product_id) {
+          const oldVal = preShopify ?? { stock: 0, backorder: 0, force_in_stock: 0, inventory_item_id: target.cht_shopify_inventory_item_id };
+          const newVal = postShopify ?? { stock: 0, backorder: 0, force_in_stock: 0, inventory_item_id: target.cht_shopify_inventory_item_id };
+          if (oldVal.stock !== newVal.stock || oldVal.backorder !== newVal.backorder || oldVal.force_in_stock !== newVal.force_in_stock) {
+            shopifyUpdates.push({
+              id: target.cht_shopify_product_id,
+              inventory_item_id: newVal.inventory_item_id || oldVal.inventory_item_id,
+              stock: newVal.stock,
+              backorder: !!newVal.backorder,
+              force_in_stock: !!newVal.force_in_stock
+            });
+          }
+        }
+
         // 5. Auto-push to websites if there are changes
-        if (chtUpdates.length > 0 || gtoUpdates.length > 0) {
+        if (chtUpdates.length > 0 || gtoUpdates.length > 0 || shopifyUpdates.length > 0) {
           const { results: settingsRows } = await env.tile_db.prepare("SELECT * FROM settings").all();
           const settings: any = {};
           settingsRows.forEach((r: any) => settings[r.key] = r.value);
@@ -1176,6 +1404,9 @@ export default {
           }
           if (gtoUpdates.length > 0 && env.STOCK_QUEUE) {
             ctx.waitUntil(sendUpdatesToQueue(env.STOCK_QUEUE, 'gto', gtoUpdates).catch(e => console.error("Auto GTO Queue Error:", e)));
+          }
+          if (shopifyUpdates.length > 0 && env.STOCK_QUEUE) {
+            ctx.waitUntil(sendUpdatesToQueue(env.STOCK_QUEUE, 'cht_shopify', shopifyUpdates).catch(e => console.error("Auto Shopify Queue Error (DELETE):", e)));
           }
         }
 
@@ -1230,12 +1461,13 @@ export default {
         const gtoMap = await resolveNames('gto_products_json_url');
 
         const stmt = env.tile_db.prepare(`
-           INSERT INTO products (sku, name, stock, rrp, mpb, pcs, brp, cht_product_id, cht_product_name, gto_product_id, gto_product_name, backorder, updated_at)
-          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, CASE WHEN ?2 LIKE '%backorder%' THEN 1 ELSE 0 END, CURRENT_TIMESTAMP)
+           INSERT INTO products (sku, name, stock, rrp, mpb, pcs, brp, cht_product_id, cht_product_name, gto_product_id, gto_product_name, cht_shopify_product_id, cht_shopify_product_name, backorder, updated_at)
+          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, CASE WHEN ?2 LIKE '%backorder%' THEN 1 ELSE 0 END, CURRENT_TIMESTAMP)
           ON CONFLICT(sku) DO UPDATE SET
             name = excluded.name, stock = excluded.stock, rrp = excluded.rrp, mpb = excluded.mpb, pcs = excluded.pcs, brp = excluded.brp,
             cht_product_id = excluded.cht_product_id, cht_product_name = excluded.cht_product_name,
             gto_product_id = excluded.gto_product_id, gto_product_name = excluded.gto_product_name,
+            cht_shopify_product_id = excluded.cht_shopify_product_id, cht_shopify_product_name = excluded.cht_shopify_product_name,
             backorder = CASE 
                 WHEN excluded.name IS NOT NULL AND excluded.name IS NOT products.name THEN CASE WHEN excluded.name LIKE '%backorder%' THEN 1 ELSE 0 END
                 ELSE products.backorder
@@ -1246,7 +1478,7 @@ export default {
         const batchStatements = items.map((p: any) => {
           const chtName = p.cht_product_id ? (chtMap.get(p.cht_product_id) || null) : null;
           const gtoName = p.gto_product_id ? (gtoMap.get(p.gto_product_id) || null) : null;
-          return stmt.bind(p.sku, p.name || null, p.stock ?? null, p.rrp ?? null, p.mpb ?? null, p.pcs ?? null, p.brp ?? null, p.cht_product_id ?? null, chtName, p.gto_product_id ?? null, gtoName);
+          return stmt.bind(p.sku, p.name || null, p.stock ?? null, p.rrp ?? null, p.mpb ?? null, p.pcs ?? null, p.brp ?? null, p.cht_product_id ?? null, chtName, p.gto_product_id ?? null, gtoName, p.cht_shopify_product_id ?? null, p.cht_shopify_product_name ?? null);
         });
 
         // Execute in chunks to respect database limits
@@ -1334,6 +1566,79 @@ export default {
       if (!site || !keyword) return new Response(JSON.stringify({ data: [] }), { headers: { 'Content-Type': 'application/json' } });
 
       try {
+        if (site === 'cht_shopify') {
+          const { results: settingsRows } = await env.tile_db.prepare("SELECT key, value FROM settings WHERE key IN ('shopify_store_domain', 'shopify_access_token')").all();
+          const settings: any = {};
+          settingsRows.forEach((r: any) => settings[r.key] = r.value);
+
+          if (!settings.shopify_store_domain || !settings.shopify_access_token) {
+            return new Response(JSON.stringify({ error: 'Shopify Store Domain or Access Token not configured' }), { status: 400 });
+          }
+
+          const cleanDomain = settings.shopify_store_domain.replace(/^https?:\/\//, '').replace(/\/+$/, '');
+          const gqlQuery = {
+            query: `query searchProducts($query: String!) {
+              products(first: 10, query: $query) {
+                nodes {
+                  id
+                  title
+                  variants(first: 50) {
+                    nodes {
+                      id
+                      title
+                      inventoryItem {
+                        id
+                      }
+                    }
+                  }
+                }
+              }
+            }`,
+            variables: { query: keyword + "*" }
+          };
+
+          const sRes = await fetch(`https://${cleanDomain}/admin/api/2024-10/graphql.json`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-Shopify-Access-Token': settings.shopify_access_token,
+              'User-Agent': 'Mozilla/5.0'
+            },
+            body: JSON.stringify(gqlQuery)
+          });
+
+          if (!sRes.ok) {
+            const errText = await sRes.text();
+            console.error("Shopify GraphQL search error:", errText);
+            return new Response(JSON.stringify({ error: `Shopify API error: ${sRes.status} ${sRes.statusText}` }), { status: 502 });
+          }
+
+          const sJson: any = await sRes.json();
+          const list: any[] = [];
+          const products = sJson?.data?.products?.nodes || [];
+
+          for (const prod of products) {
+            const variants = prod.variants?.nodes || [];
+            for (const v of variants) {
+              const vId = v.id.split('/').pop() || v.id;
+              const invItemId = v.inventoryItem?.id ? v.inventoryItem.id.split('/').pop() : null;
+              const displayName = (v.title && v.title.toLowerCase() !== 'default title')
+                ? `${prod.title} - ${v.title}`
+                : prod.title;
+
+              list.push({
+                id: vId,
+                inventory_item_id: invItemId,
+                name: displayName
+              });
+            }
+          }
+
+          return new Response(JSON.stringify({ data: list.slice(0, 20) }), {
+            headers: { 'Content-Type': 'application/json' }
+          });
+        }
+
         const settingKey = site === 'cht' ? 'cht_products_json_url' : 'gto_products_json_url';
         const setting = await env.tile_db.prepare("SELECT value FROM settings WHERE key = ?").bind(settingKey).first();
         if (!setting || !setting.value) return new Response(JSON.stringify({ error: 'JSON URL not configured in settings' }), { status: 400 });
@@ -1369,21 +1674,26 @@ export default {
         const body: any = await request.json();
 
         // 1. Snapshot MAX stock BEFORE map update
-        const current = await env.tile_db.prepare("SELECT CAST(cht_product_id AS INTEGER) as cht_id, CAST(gto_product_id AS INTEGER) as gto_id FROM products WHERE sku = ?").bind(body.sku).first();
+        const current = await env.tile_db.prepare("SELECT CAST(cht_product_id AS INTEGER) as cht_id, CAST(gto_product_id AS INTEGER) as gto_id, cht_shopify_product_id, cht_shopify_inventory_item_id FROM products WHERE sku = ?").bind(body.sku).first();
         const chtIds = new Set<number>();
         const gtoIds = new Set<number>();
+        const shopifyIds = new Set<string>();
         if (current) {
             if (current.cht_id) chtIds.add(current.cht_id);
             if (current.gto_id) gtoIds.add(current.gto_id);
+            if (current.cht_shopify_product_id) shopifyIds.add(String(current.cht_shopify_product_id));
         }
         if (body.cht_product_id) chtIds.add(Number(body.cht_product_id));
         if (body.gto_product_id) gtoIds.add(Number(body.gto_product_id));
+        if (body.cht_shopify_product_id) shopifyIds.add(String(body.cht_shopify_product_id));
 
         const chtIdsArr = Array.from(chtIds);
         const gtoIdsArr = Array.from(gtoIds);
+        const shopifyIdsArr = Array.from(shopifyIds);
 
         let preChtMap = new Map();
         let preGtoMap = new Map();
+        let preShopifyMap = new Map();
         if (chtIdsArr.length > 0) {
             const ph = chtIdsArr.map(() => '?').join(',');
             const { results } = await env.tile_db.prepare(`SELECT CAST(cht_product_id AS INTEGER) as id, MAX(CAST(stock AS REAL)) as max_stock, MAX(backorder) as backorder, MAX(force_in_stock) as force_in_stock FROM products WHERE CAST(cht_product_id AS INTEGER) IN (${ph}) GROUP BY CAST(cht_product_id AS INTEGER)`).bind(...chtIdsArr).all();
@@ -1394,25 +1704,52 @@ export default {
             const { results } = await env.tile_db.prepare(`SELECT CAST(gto_product_id AS INTEGER) as id, MAX(CAST(stock AS REAL)) as max_stock, MAX(backorder) as backorder, MAX(force_in_stock) as force_in_stock FROM products WHERE CAST(gto_product_id AS INTEGER) IN (${ph}) GROUP BY CAST(gto_product_id AS INTEGER)`).bind(...gtoIdsArr).all();
             preGtoMap = new Map(results.map((r: any) => [r.id, { stock: r.max_stock, backorder: r.backorder, force_in_stock: r.force_in_stock }]));
         }
+        if (shopifyIdsArr.length > 0) {
+            const ph = shopifyIdsArr.map(() => '?').join(',');
+            const { results } = await env.tile_db.prepare(`SELECT cht_shopify_product_id as id, cht_shopify_inventory_item_id as inventory_item_id, MAX(CAST(stock AS REAL)) as max_stock, MAX(backorder) as backorder, MAX(force_in_stock) as force_in_stock FROM products WHERE cht_shopify_product_id IN (${ph}) GROUP BY cht_shopify_product_id`).bind(...shopifyIdsArr).all();
+            preShopifyMap = new Map(results.map((r: any) => [r.id, { stock: r.max_stock, backorder: r.backorder, force_in_stock: r.force_in_stock, inventory_item_id: r.inventory_item_id }]));
+        }
 
         // 2. Perform map update
         await env.tile_db.prepare(`
           UPDATE products 
           SET cht_product_id = ?1, cht_product_name = ?2, 
               gto_product_id = ?3, gto_product_name = ?4,
-              backorder = ?5, force_in_stock = ?6,
+              cht_shopify_product_id = ?5, cht_shopify_product_name = ?6,
+              cht_shopify_inventory_item_id = ?7,
+              backorder = ?8, force_in_stock = ?9,
               updated_at = CURRENT_TIMESTAMP
-          WHERE sku = ?7
+          WHERE sku = ?10
         `).bind(
-          body.cht_product_id, body.cht_product_name,
-          body.gto_product_id, body.gto_product_name,
+          body.cht_product_id || null, body.cht_product_name || null,
+          body.gto_product_id || null, body.gto_product_name || null,
+          body.cht_shopify_product_id || null, body.cht_shopify_product_name || null,
+          body.cht_shopify_inventory_item_id || null,
           body.backorder ? 1 : 0, body.force_in_stock ? 1 : 0,
           body.sku
         ).run();
 
+        // Dual-write CHT Shopify mapping to Turso products table if parent product exists
+        try {
+          const parentRow = await tursoClient.execute({
+            sql: `SELECT product_parent_id FROM inventory WHERE sku = ? LIMIT 1`,
+            args: [body.sku]
+          });
+          const parentId = parentRow.rows[0]?.product_parent_id;
+          if (parentId) {
+            await tursoClient.execute({
+              sql: `UPDATE products SET cht_shopify_id = ?, cht_shopify_name = ? WHERE product_id = ?`,
+              args: [body.cht_shopify_product_id || null, body.cht_shopify_product_name || null, parentId]
+            });
+          }
+        } catch (te: any) {
+          console.error("Turso dual-write error (map):", te);
+        }
+
         // 3. Snapshot MAX stock AFTER map update
         let postChtMap = new Map();
         let postGtoMap = new Map();
+        let postShopifyMap = new Map();
         if (chtIdsArr.length > 0) {
             const ph = chtIdsArr.map(() => '?').join(',');
             const { results } = await env.tile_db.prepare(`SELECT CAST(cht_product_id AS INTEGER) as id, MAX(CAST(stock AS REAL)) as max_stock, MAX(backorder) as backorder, MAX(force_in_stock) as force_in_stock FROM products WHERE CAST(cht_product_id AS INTEGER) IN (${ph}) GROUP BY CAST(cht_product_id AS INTEGER)`).bind(...chtIdsArr).all();
@@ -1422,6 +1759,11 @@ export default {
             const ph = gtoIdsArr.map(() => '?').join(',');
             const { results } = await env.tile_db.prepare(`SELECT CAST(gto_product_id AS INTEGER) as id, MAX(CAST(stock AS REAL)) as max_stock, MAX(backorder) as backorder, MAX(force_in_stock) as force_in_stock FROM products WHERE CAST(gto_product_id AS INTEGER) IN (${ph}) GROUP BY CAST(gto_product_id AS INTEGER)`).bind(...gtoIdsArr).all();
             postGtoMap = new Map(results.map((r: any) => [r.id, { stock: r.max_stock, backorder: r.backorder, force_in_stock: r.force_in_stock }]));
+        }
+        if (shopifyIdsArr.length > 0) {
+            const ph = shopifyIdsArr.map(() => '?').join(',');
+            const { results } = await env.tile_db.prepare(`SELECT cht_shopify_product_id as id, cht_shopify_inventory_item_id as inventory_item_id, MAX(CAST(stock AS REAL)) as max_stock, MAX(backorder) as backorder, MAX(force_in_stock) as force_in_stock FROM products WHERE cht_shopify_product_id IN (${ph}) GROUP BY cht_shopify_product_id`).bind(...shopifyIdsArr).all();
+            postShopifyMap = new Map(results.map((r: any) => [r.id, { stock: r.max_stock, backorder: r.backorder, force_in_stock: r.force_in_stock, inventory_item_id: r.inventory_item_id }]));
         }
 
         // 4. Compare and find what actually changed
@@ -1445,8 +1787,24 @@ export default {
           }
         }
 
+        const shopifyUpdates: any[] = [];
+        const allShopifyIds = new Set([...preShopifyMap.keys(), ...postShopifyMap.keys()]);
+        for (const id of allShopifyIds) {
+          const oldVal = preShopifyMap.get(id) ?? { stock: 0, backorder: 0, force_in_stock: 0, inventory_item_id: null };
+          const newVal = postShopifyMap.get(id) ?? { stock: 0, backorder: 0, force_in_stock: 0, inventory_item_id: null };
+          if (oldVal.stock !== newVal.stock || oldVal.backorder !== newVal.backorder || oldVal.force_in_stock !== newVal.force_in_stock) {
+            shopifyUpdates.push({
+              id,
+              inventory_item_id: newVal.inventory_item_id || oldVal.inventory_item_id,
+              stock: newVal.stock,
+              backorder: !!newVal.backorder,
+              force_in_stock: !!newVal.force_in_stock
+            });
+          }
+        }
+
         // 5. Auto-push to websites if there are changes
-        if (chtUpdates.length > 0 || gtoUpdates.length > 0) {
+        if (chtUpdates.length > 0 || gtoUpdates.length > 0 || shopifyUpdates.length > 0) {
           const { results: settingsRows } = await env.tile_db.prepare("SELECT * FROM settings").all();
           const settings: any = {};
           settingsRows.forEach((r: any) => settings[r.key] = r.value);
@@ -1456,6 +1814,9 @@ export default {
           }
           if (gtoUpdates.length > 0 && env.STOCK_QUEUE) {
             ctx.waitUntil(sendUpdatesToQueue(env.STOCK_QUEUE, 'gto', gtoUpdates).catch(e => console.error("Auto GTO Queue Error:", e)));
+          }
+          if (shopifyUpdates.length > 0 && env.STOCK_QUEUE) {
+            ctx.waitUntil(sendUpdatesToQueue(env.STOCK_QUEUE, 'cht_shopify', shopifyUpdates).catch(e => console.error("Auto Shopify Queue Error (MAP):", e)));
           }
         }
 
@@ -1472,7 +1833,7 @@ export default {
         const settings: any = {};
         settingsRows.forEach((r: any) => settings[r.key] = r.value);
 
-        const resultsObj: any = { cht: null, gto: null };
+        const resultsObj: any = { cht: null, gto: null, cht_shopify: null };
 
         // Sync CHT
         if (settings.cht_endpoint && settings.cht_api_key) {
@@ -1496,6 +1857,18 @@ export default {
             resultsObj.gto = { status: res.hasError ? 207 : 200, ok: res.ok, updated: res.updated, error: res.error };
           } else {
             resultsObj.gto = { ok: false, reason: 'No mapped products for GTO' };
+          }
+        }
+
+        // Sync CHT Shopify
+        if (settings.shopify_store_domain && settings.shopify_access_token && settings.shopify_location_id) {
+          const { results: shopifyData } = await env.tile_db.prepare("SELECT cht_shopify_product_id as id, cht_shopify_inventory_item_id as inventory_item_id, MAX(CAST(stock AS REAL)) as stock, MAX(backorder) as backorder, MAX(force_in_stock) as force_in_stock FROM products WHERE cht_shopify_product_id IS NOT NULL GROUP BY cht_shopify_product_id").all();
+          if (shopifyData.length > 0) {
+            const payload = shopifyData.map((r: any) => ({ id: r.id, inventory_item_id: r.inventory_item_id, stock: r.stock, backorder: !!r.backorder, force_in_stock: !!r.force_in_stock }));
+            const res = await pushShopifyInChunks(settings.shopify_store_domain, settings.shopify_access_token, settings.shopify_location_id, payload, env.tile_db);
+            resultsObj.cht_shopify = { status: res.hasError ? 207 : 200, ok: res.ok, updated: res.updated, error: res.error };
+          } else {
+            resultsObj.cht_shopify = { ok: false, reason: 'No mapped products for CHT Shopify' };
           }
         }
 
@@ -1542,22 +1915,25 @@ export default {
         const skus = items.map((p: any) => p.sku);
         const chtIds = new Set<number>();
         const gtoIds = new Set<number>();
+        const shopifyIds = new Set<string>();
         
         if (skus.length > 0) {
            const chunkSize = 100;
            for (let i = 0; i < skus.length; i += chunkSize) {
               const chunk = skus.slice(i, i + chunkSize);
               const placeholders = chunk.map(() => '?').join(',');
-              const affected = await env.tile_db.prepare(`SELECT CAST(cht_product_id AS INTEGER) as cht_id, CAST(gto_product_id AS INTEGER) as gto_id FROM products WHERE sku IN (${placeholders})`).bind(...chunk).all();
+              const affected = await env.tile_db.prepare(`SELECT CAST(cht_product_id AS INTEGER) as cht_id, CAST(gto_product_id AS INTEGER) as gto_id, cht_shopify_product_id as shopify_id FROM products WHERE sku IN (${placeholders})`).bind(...chunk).all();
               affected.results.forEach((r: any) => {
                  if (r.cht_id) chtIds.add(r.cht_id);
                  if (r.gto_id) gtoIds.add(r.gto_id);
+                 if (r.shopify_id) shopifyIds.add(String(r.shopify_id));
               });
            }
         }
         
         const chtIdsArr = Array.from(chtIds);
         const gtoIdsArr = Array.from(gtoIds);
+        const shopifyIdsArr = Array.from(shopifyIds);
 
         const chunkFetch = async (ids: number[], field: string, targetMap: Map<any, any>) => {
            for (let i = 0; i < ids.length; i += 100) {
@@ -1567,12 +1943,23 @@ export default {
               results.forEach((r: any) => targetMap.set(r.id, { stock: r.max_stock, backorder: r.backorder, force_in_stock: r.force_in_stock }));
            }
         };
+
+        const chunkFetchShopify = async (ids: string[], targetMap: Map<any, any>) => {
+           for (let i = 0; i < ids.length; i += 100) {
+              const chunk = ids.slice(i, i + 100);
+              const ph = chunk.map(() => '?').join(',');
+              const { results } = await env.tile_db.prepare(`SELECT cht_shopify_product_id as id, MAX(cht_shopify_inventory_item_id) as inventory_item_id, MAX(CAST(stock AS REAL)) as max_stock, MAX(backorder) as backorder, MAX(force_in_stock) as force_in_stock FROM products WHERE cht_shopify_product_id IN (${ph}) GROUP BY cht_shopify_product_id`).bind(...chunk).all();
+              results.forEach((r: any) => targetMap.set(r.id, { stock: r.max_stock, backorder: r.backorder, force_in_stock: r.force_in_stock, inventory_item_id: r.inventory_item_id }));
+           }
+        };
         
         // 1. Snapshot MAX stock BEFORE update
         let preChtMap = new Map();
         let preGtoMap = new Map();
+        let preShopifyMap = new Map();
         if (chtIdsArr.length > 0) await chunkFetch(chtIdsArr, 'cht_product_id', preChtMap);
         if (gtoIdsArr.length > 0) await chunkFetch(gtoIdsArr, 'gto_product_id', preGtoMap);
+        if (shopifyIdsArr.length > 0) await chunkFetchShopify(shopifyIdsArr, preShopifyMap);
 
         // Prepare statement using UPSERT to insert or update existing products
         const stmt = env.tile_db.prepare(`
@@ -1743,8 +2130,10 @@ export default {
         // 2. Snapshot MAX stock AFTER update
         let postChtMap = new Map();
         let postGtoMap = new Map();
+        let postShopifyMap = new Map();
         if (chtIdsArr.length > 0) await chunkFetch(chtIdsArr, 'cht_product_id', postChtMap);
         if (gtoIdsArr.length > 0) await chunkFetch(gtoIdsArr, 'gto_product_id', postGtoMap);
+        if (shopifyIdsArr.length > 0) await chunkFetchShopify(shopifyIdsArr, postShopifyMap);
 
         // 3. Compare and find what actually changed
         const chtUpdates: any[] = [];
@@ -1767,9 +2156,25 @@ export default {
           }
         }
 
+        const shopifyUpdates: any[] = [];
+        const allShopifyIds = new Set([...preShopifyMap.keys(), ...postShopifyMap.keys()]);
+        for (const id of allShopifyIds) {
+          const oldVal = preShopifyMap.get(id) ?? { stock: 0, backorder: 0, force_in_stock: 0, inventory_item_id: null };
+          const newVal = postShopifyMap.get(id) ?? { stock: 0, backorder: 0, force_in_stock: 0, inventory_item_id: null };
+          if (oldVal.stock !== newVal.stock || oldVal.backorder !== newVal.backorder || oldVal.force_in_stock !== newVal.force_in_stock) {
+            shopifyUpdates.push({
+              id,
+              inventory_item_id: newVal.inventory_item_id || oldVal.inventory_item_id,
+              stock: newVal.stock,
+              backorder: !!newVal.backorder,
+              force_in_stock: !!newVal.force_in_stock
+            });
+          }
+        }
+
         // 4. Auto-push to websites if there are changes
-        let pushResults = { cht_pushed: chtUpdates.length, gto_pushed: gtoUpdates.length };
-        if (chtUpdates.length > 0 || gtoUpdates.length > 0) {
+        let pushResults = { cht_pushed: chtUpdates.length, gto_pushed: gtoUpdates.length, shopify_pushed: shopifyUpdates.length };
+        if (chtUpdates.length > 0 || gtoUpdates.length > 0 || shopifyUpdates.length > 0) {
           const { results: settingsRows } = await env.tile_db.prepare("SELECT * FROM settings").all();
           const settings: any = {};
           settingsRows.forEach((r: any) => settings[r.key] = r.value);
@@ -1781,6 +2186,10 @@ export default {
 
           if (gtoUpdates.length > 0 && env.STOCK_QUEUE) {
             ctx.waitUntil(sendUpdatesToQueue(env.STOCK_QUEUE, 'gto', gtoUpdates).catch(e => console.error("Auto GTO Queue Error:", e)));
+          }
+
+          if (shopifyUpdates.length > 0 && env.STOCK_QUEUE) {
+            ctx.waitUntil(sendUpdatesToQueue(env.STOCK_QUEUE, 'cht_shopify', shopifyUpdates).catch(e => console.error("Auto Shopify Queue Error:", e)));
           }
         }
 
@@ -1855,16 +2264,19 @@ export default {
     console.log("data received in queue.");
     const chtMap = new Map();
     const gtoMap = new Map();
+    const shopifyMap = new Map();
 
     for (const msg of batch.messages) {
       if (msg.body.site === 'cht') {
         chtMap.set(msg.body.update.id, msg.body.update);
       } else if (msg.body.site === 'gto') {
         gtoMap.set(msg.body.update.id, msg.body.update);
+      } else if (msg.body.site === 'cht_shopify') {
+        shopifyMap.set(msg.body.update.id, msg.body.update);
       }
     }
 
-    if (chtMap.size === 0 && gtoMap.size === 0) return;
+    if (chtMap.size === 0 && gtoMap.size === 0 && shopifyMap.size === 0) return;
 
     let settings: any = {};
     try {
@@ -1884,6 +2296,11 @@ export default {
       const gtoUpdates = Array.from(gtoMap.values());
       const res = await pushInChunks(settings.gto_endpoint, settings.gto_api_key, gtoUpdates, env.tile_db, 'gto');
       if (res.hasError) console.error("Queue GTO Push Error:", res.error);
+    }
+    if (shopifyMap.size > 0 && settings.shopify_store_domain && settings.shopify_access_token && settings.shopify_location_id) {
+      const shopifyUpdates = Array.from(shopifyMap.values());
+      const res = await pushShopifyInChunks(settings.shopify_store_domain, settings.shopify_access_token, settings.shopify_location_id, shopifyUpdates, env.tile_db);
+      if (res.hasError) console.error("Queue Shopify Push Error:", res.error);
     }
   }
 };
