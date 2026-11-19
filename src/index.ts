@@ -382,19 +382,29 @@ const SETTINGS_HTML = `
                 </div>
             </div>
 
-            <h5 class="mt-4 pb-2">CHT Shopify API</h5>
+            <h5 class="mt-4 pb-2">CHT Shopify API (Dev Dashboard / Client Credentials)</h5>
             <div class="row mb-3">
                 <div class="col-md-6">
                     <label class="form-label">Shopify Store Domain</label>
                     <input type="text" class="form-control" name="shopify_store_domain" placeholder="your-store.myshopify.com">
                 </div>
                 <div class="col-md-6">
-                    <label class="form-label">Admin API Access Token</label>
-                    <input type="password" class="form-control" name="shopify_access_token" placeholder="shpat_...">
-                </div>
-                <div class="col-md-6 mt-3">
                     <label class="form-label">Location ID</label>
                     <input type="text" class="form-control" name="shopify_location_id" placeholder="e.g. 89234567890">
+                </div>
+                <div class="col-md-6 mt-3">
+                    <label class="form-label">Client ID</label>
+                    <input type="text" class="form-control" name="shopify_client_id" placeholder="Shopify App Client ID">
+                </div>
+                <div class="col-md-6 mt-3">
+                    <label class="form-label">Client Secret</label>
+                    <input type="password" class="form-control" name="shopify_client_secret" placeholder="shpss_...">
+                </div>
+                <div class="col-md-12 mt-3">
+                    <div class="d-flex align-items-center justify-content-between bg-light p-2 px-3 rounded border">
+                        <div id="shopifyTokenStatus" class="small text-muted">Token Status: Checking...</div>
+                        <button type="button" class="btn btn-sm btn-outline-primary" id="testShopifyTokenBtn">Test &amp; Refresh Token</button>
+                    </div>
                 </div>
             </div>
 
@@ -428,17 +438,69 @@ const SETTINGS_HTML = `
     <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
     <script>
         $(document).ready(function() {
-            $.get('/api/settings', function(res) {
-                if(res.data) {
-                    for(const key in res.data) { $('[name="'+key+'"]').val(res.data[key]); }
+            function renderTokenStatus(hasToken, expiresAt) {
+                const el = $('#shopifyTokenStatus');
+                const expMs = Number(expiresAt || 0);
+                if (hasToken && expMs > Date.now()) {
+                    el.removeClass('text-muted text-warning text-danger').addClass('text-success')
+                      .text('Token Status: Active (valid until ' + new Date(expMs).toLocaleString() + ')');
+                } else if (hasToken && expMs > 0) {
+                    el.removeClass('text-muted text-success text-danger').addClass('text-warning')
+                      .text('Token Status: Expired at ' + new Date(expMs).toLocaleString() + ' (will auto-refresh on next sync)');
+                } else {
+                    el.removeClass('text-success text-warning text-danger').addClass('text-muted')
+                      .text('Token Status: Not fetched yet (click Test & Refresh Token or wait for next sync)');
                 }
-            });
+            }
+
+            function loadSettings() {
+                $.get('/api/settings', function(res) {
+                    if(res.data) {
+                        for(const key in res.data) { $('[name="'+key+'"]').val(res.data[key]); }
+                        renderTokenStatus(res.data.shopify_has_token, res.data.shopify_token_expires_at);
+                    }
+                });
+            }
+            loadSettings();
+
             $('#settingsForm').on('submit', function(e) {
                 e.preventDefault();
                 $('#saveBtn').prop('disabled', true).text('Saving...');
                 const formData = {};
                 $(this).serializeArray().forEach(item => formData[item.name] = item.value);
-                $.ajax({ url: '/api/settings', type: 'POST', contentType: 'application/json', data: JSON.stringify(formData), success: function() { $('#alertBox').removeClass('d-none alert-danger').addClass('alert-success').text('Settings saved successfully!'); setTimeout(() => $('#alertBox').addClass('d-none'), 3000); }, error: function() { $('#alertBox').removeClass('d-none alert-success').addClass('alert-danger').text('Failed to save settings.'); }, complete: function() { $('#saveBtn').prop('disabled', false).text('Save Settings'); } });
+                $.ajax({ url: '/api/settings', type: 'POST', contentType: 'application/json', data: JSON.stringify(formData), success: function() { $('#alertBox').removeClass('d-none alert-danger').addClass('alert-success').text('Settings saved successfully!'); setTimeout(() => $('#alertBox').addClass('d-none'), 3000); loadSettings(); }, error: function() { $('#alertBox').removeClass('d-none alert-success').addClass('alert-danger').text('Failed to save settings.'); }, complete: function() { $('#saveBtn').prop('disabled', false).text('Save Settings'); } });
+            });
+
+            $('#testShopifyTokenBtn').on('click', function() {
+                const btn = $(this);
+                btn.prop('disabled', true).text('Testing...');
+                const payload = {
+                    shopify_store_domain: $('[name="shopify_store_domain"]').val(),
+                    shopify_client_id: $('[name="shopify_client_id"]').val(),
+                    shopify_client_secret: $('[name="shopify_client_secret"]').val(),
+                    shopify_location_id: $('[name="shopify_location_id"]').val()
+                };
+                $.ajax({
+                    url: '/api/shopify/test-token',
+                    type: 'POST',
+                    contentType: 'application/json',
+                    data: JSON.stringify(payload),
+                    success: function(res) {
+                        renderTokenStatus(true, res.expires_at);
+                        $('#alertBox').removeClass('d-none alert-danger').addClass('alert-success')
+                          .text('Shopify token refreshed and saved! Prefix: ' + res.token_prefix + '..., expires at ' + new Date(res.expires_at).toLocaleString());
+                        window.scrollTo(0, 0);
+                    },
+                    error: function(xhr) {
+                        const msg = xhr.responseJSON && xhr.responseJSON.error ? xhr.responseJSON.error : 'Failed to acquire Shopify token.';
+                        $('#shopifyTokenStatus').removeClass('text-muted text-success text-warning').addClass('text-danger').text('Token Error: ' + msg);
+                        $('#alertBox').removeClass('d-none alert-success').addClass('alert-danger').text('Shopify Connection Failed: ' + msg);
+                        window.scrollTo(0, 0);
+                    },
+                    complete: function() {
+                        btn.prop('disabled', false).text('Test & Refresh Token');
+                    }
+                });
             });
 
             // Export CSV
@@ -810,6 +872,111 @@ async function sendUpdatesToQueue(queue: any, site: string, updates: any[], batc
   }
 }
 
+const SHOPIFY_API_VERSION = '2026-10';
+
+function cleanShopifyDomain(storeDomain: string): string {
+  return (storeDomain || '').trim().replace(/^https?:\/\//i, '').split('/')[0].trim();
+}
+
+async function getShopifyAccessToken(db: any, settings: any, forceRefresh: boolean = false): Promise<{ token: string; expiresAt: number; refreshed: boolean }> {
+  const cleanDomain = cleanShopifyDomain(settings.shopify_store_domain || '');
+  const clientId = (settings.shopify_client_id || '').trim();
+  const clientSecret = (settings.shopify_client_secret || '').trim();
+
+  if (!cleanDomain || !clientId || !clientSecret) {
+    throw new Error('Shopify Store Domain, Client ID, or Client Secret not configured in Settings');
+  }
+
+  const cachedToken = (settings.shopify_access_token || '').trim();
+  const cachedExpiresAt = Number(settings.shopify_token_expires_at || 0);
+  const BUFFER_MS = 5 * 60 * 1000; // 5-minute safety buffer before 24h expiry
+
+  if (!forceRefresh && cachedToken && cachedExpiresAt > Date.now() + BUFFER_MS) {
+    return { token: cachedToken, expiresAt: cachedExpiresAt, refreshed: false };
+  }
+
+  const formBody = new URLSearchParams({
+    grant_type: 'client_credentials',
+    client_id: clientId,
+    client_secret: clientSecret
+  });
+
+  const tokenRes = await fetch(`https://${cleanDomain}/admin/oauth/access_token`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'User-Agent': 'Mozilla/5.0'
+    },
+    body: formBody.toString()
+  });
+
+  const resText = await tokenRes.text();
+  if (!tokenRes.ok) {
+    throw new Error(`Shopify OAuth token error (${tokenRes.status} ${tokenRes.statusText}): ${resText.substring(0, 300)}`);
+  }
+
+  let tokenJson: any;
+  try {
+    tokenJson = JSON.parse(resText);
+  } catch (e) {
+    throw new Error(`Shopify OAuth returned invalid JSON: ${resText.substring(0, 200)}`);
+  }
+
+  const newToken = (tokenJson.access_token || '').trim();
+  if (!newToken) {
+    throw new Error(`Shopify OAuth response missing access_token: ${resText.substring(0, 200)}`);
+  }
+
+  const expiresInSec = Number(tokenJson.expires_in) || 86399;
+  const newExpiresAt = Date.now() + expiresInSec * 1000;
+
+  if (db) {
+    const stmt = db.prepare("INSERT INTO settings (key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = excluded.value");
+    await db.batch([
+      stmt.bind('shopify_access_token', newToken),
+      stmt.bind('shopify_token_expires_at', String(newExpiresAt))
+    ]);
+  }
+
+  settings.shopify_access_token = newToken;
+  settings.shopify_token_expires_at = String(newExpiresAt);
+
+  return { token: newToken, expiresAt: newExpiresAt, refreshed: true };
+}
+
+async function shopifyGraphqlFetch(cleanDomain: string, db: any, settings: any, gqlBody: any): Promise<Response> {
+  let { token } = await getShopifyAccessToken(db, settings, false);
+  const endpoint = `https://${cleanDomain}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`;
+  const bodyStr = JSON.stringify(gqlBody);
+
+  let res = await fetch(endpoint, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Shopify-Access-Token': token,
+      'User-Agent': 'Mozilla/5.0'
+    },
+    body: bodyStr
+  });
+
+  if (res.status === 401) {
+    console.warn("Shopify returned 401 with cached token, refreshing token and retrying once...");
+    const refreshed = await getShopifyAccessToken(db, settings, true);
+    token = refreshed.token;
+    res = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Shopify-Access-Token': token,
+        'User-Agent': 'Mozilla/5.0'
+      },
+      body: bodyStr
+    });
+  }
+
+  return res;
+}
+
 function calculateShopifyStock(rawStock: number | string | null | undefined, suffix?: string | null, m2PerBox?: number | string | null): number {
   const cleanSuffix = String(suffix || '').trim().toLowerCase();
   const validStock = Math.max(0, Number(rawStock) || 0);
@@ -822,109 +989,127 @@ function calculateShopifyStock(rawStock: number | string | null | undefined, suf
   return Math.floor(validStock);
 }
 
-async function pushShopifyInChunks(storeDomain: string, accessToken: string, locationId: string, payload: any[], db: any, chunkSize: number = 50) {
+async function pushShopifyInChunks(settings: any, payload: any[], db: any, chunkSize: number = 50) {
   let successCount = 0;
   let hasError = false;
   let lastErrorMsg = '';
-  const cleanDomain = (storeDomain || '').trim().replace(/^https?:\/\//i, '').split('/')[0].trim();
-  const cleanToken = (accessToken || '').trim();
-  const cleanLocId = (locationId || '').replace(/^gid:\/\/shopify\/Location\//, '').trim();
+  const cleanDomain = cleanShopifyDomain(settings.shopify_store_domain || '');
+  const cleanLocId = (settings.shopify_location_id || '').replace(/^gid:\/\/shopify\/Location\//, '').trim();
 
   for (let i = 0; i < payload.length; i += chunkSize) {
     const chunk = payload.slice(i, i + chunkSize);
     const logDetails: any = { chunk, results: [] };
 
     try {
-      const quantitiesToSet: any[] = [];
-      const variantsToUpdatePolicy: any[] = [];
-
-      for (const item of chunk) {
-        let invItemId = item.inventory_item_id;
+      // 1. Batch-resolve variant metadata (productId, inventoryItem.id, current inventoryPolicy) in one GraphQL call
+      const variantGids = chunk.map(item => {
         const vId = String(item.id).replace(/^gid:\/\/shopify\/ProductVariant\//, '').trim();
+        return `gid://shopify/ProductVariant/${vId}`;
+      });
+      const variantMetaMap = new Map<string, { productId?: string; inventoryItemId?: string; currentPolicy?: string }>();
 
-        if (!invItemId) {
-          try {
-            const gql = {
-              query: `query getVariantInvItem($id: ID!) {
-                productVariant(id: $id) {
-                  inventoryItem { id }
-                }
-              }`,
-              variables: { id: `gid://shopify/ProductVariant/${vId}` }
-            };
-            const fRes = await fetch(`https://${cleanDomain}/admin/api/2024-10/graphql.json`, {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                'X-Shopify-Access-Token': cleanToken,
-                'User-Agent': 'Mozilla/5.0'
-              },
-              body: JSON.stringify(gql)
-            });
-            if (fRes.ok) {
-              const fJson: any = await fRes.json();
-              const fullInvId = fJson?.data?.productVariant?.inventoryItem?.id;
-              if (fullInvId) {
-                invItemId = fullInvId.split('/').pop();
+      try {
+        const metaQuery = {
+          query: `query getVariantsMeta($ids: [ID!]!) {
+            nodes(ids: $ids) {
+              ... on ProductVariant {
+                id
+                inventoryPolicy
+                product { id }
+                inventoryItem { id }
               }
             }
-          } catch (e: any) {
-            console.error(`Failed to resolve inventory item for variant ${vId}:`, e);
+          }`,
+          variables: { ids: variantGids }
+        };
+        const metaRes = await shopifyGraphqlFetch(cleanDomain, db, settings, metaQuery);
+        if (metaRes.ok) {
+          const metaJson: any = await metaRes.json();
+          const nodes = metaJson?.data?.nodes || [];
+          for (const node of nodes) {
+            if (!node || !node.id) continue;
+            const cleanVid = String(node.id).split('/').pop() || '';
+            const fullInvId = node.inventoryItem?.id;
+            variantMetaMap.set(cleanVid, {
+              productId: node.product?.id || undefined,
+              inventoryItemId: fullInvId ? String(fullInvId).split('/').pop() : undefined,
+              currentPolicy: node.inventoryPolicy || undefined
+            });
           }
         }
+      } catch (e: any) {
+        console.warn("Failed to batch-resolve Shopify variant metadata:", e);
+      }
+
+      const quantitiesToSet: any[] = [];
+      const policyUpdatesByProduct = new Map<string, Array<{ id: string; inventoryPolicy: string }>>();
+
+      for (const item of chunk) {
+        const vId = String(item.id).replace(/^gid:\/\/shopify\/ProductVariant\//, '').trim();
+        const meta = variantMetaMap.get(vId);
+        const invItemId = item.inventory_item_id || meta?.inventoryItemId;
 
         if (invItemId) {
           const cleanInvItemId = String(invItemId).replace(/^gid:\/\/shopify\/InventoryItem\//, '').trim();
           quantitiesToSet.push({
             inventoryItemId: `gid://shopify/InventoryItem/${cleanInvItemId}`,
             locationId: `gid://shopify/Location/${cleanLocId}`,
-            quantity: Math.max(0, Math.round(Number(item.stock) || 0))
+            quantity: Math.max(0, Math.round(Number(item.stock) || 0)),
+            changeFromQuantity: null
           });
+        } else {
+          hasError = true;
+          lastErrorMsg = `Missing inventoryItemId for variant ${vId}`;
+          logDetails.results.push({ type: 'inventory', variantId: vId, error: lastErrorMsg });
         }
 
-        variantsToUpdatePolicy.push({
-          id: vId,
-          policy: (item.backorder || item.force_in_stock) ? 'continue' : 'deny'
-        });
+        const targetPolicy = (item.backorder || item.force_in_stock) ? 'CONTINUE' : 'DENY';
+        if (meta?.productId && meta.currentPolicy !== targetPolicy) {
+          if (!policyUpdatesByProduct.has(meta.productId)) {
+            policyUpdatesByProduct.set(meta.productId, []);
+          }
+          policyUpdatesByProduct.get(meta.productId)!.push({
+            id: `gid://shopify/ProductVariant/${vId}`,
+            inventoryPolicy: targetPolicy
+          });
+        }
       }
 
+      // 2. Push inventory quantities via 2026-10 GraphQL inventorySetQuantities with mandatory @idempotent
       if (quantitiesToSet.length > 0) {
         const invMutation = {
-          query: `mutation inventorySetQuantities($input: InventorySetQuantitiesInput!) {
-            inventorySetQuantities(input: $input) {
+          query: `mutation inventorySetQuantities($input: InventorySetQuantitiesInput!, $idempotencyKey: String!) {
+            inventorySetQuantities(input: $input) @idempotent(key: $idempotencyKey) {
               userErrors {
+                code
                 field
                 message
               }
             }
           }`,
           variables: {
+            idempotencyKey: crypto.randomUUID(),
             input: {
               name: "available",
               reason: "correction",
-              ignoreCompareQuantity: true,
               quantities: quantitiesToSet
             }
           }
         };
 
-        const mRes = await fetch(`https://${cleanDomain}/admin/api/2024-10/graphql.json`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-Shopify-Access-Token': cleanToken,
-            'User-Agent': 'Mozilla/5.0'
-          },
-          body: JSON.stringify(invMutation)
-        });
-
+        const mRes = await shopifyGraphqlFetch(cleanDomain, db, settings, invMutation);
         const mText = await mRes.text();
         if (mRes.ok) {
           const mJson: any = JSON.parse(mText);
-          const errors = mJson?.data?.inventorySetQuantities?.userErrors || [];
-          if (errors.length > 0) {
+          const gqlErrors = mJson?.errors || [];
+          const userErrors = mJson?.data?.inventorySetQuantities?.userErrors || [];
+          if (gqlErrors.length > 0) {
             hasError = true;
-            lastErrorMsg = errors.map((e: any) => `${e.field?.join('.')}: ${e.message}`).join(' | ');
+            lastErrorMsg = gqlErrors.map((e: any) => e.message).join(' | ');
+            logDetails.results.push({ type: 'inventory', error: lastErrorMsg });
+          } else if (userErrors.length > 0) {
+            hasError = true;
+            lastErrorMsg = userErrors.map((e: any) => `${e.code || ''} ${e.field?.join('.') || ''}: ${e.message}`).join(' | ');
             logDetails.results.push({ type: 'inventory', error: lastErrorMsg });
           } else {
             successCount += quantitiesToSet.length;
@@ -932,33 +1117,46 @@ async function pushShopifyInChunks(storeDomain: string, accessToken: string, loc
           }
         } else {
           hasError = true;
-          lastErrorMsg = `HTTP ${mRes.status} ${mRes.statusText} - ${mText.substring(0, 150)}`;
+          lastErrorMsg = `HTTP ${mRes.status} ${mRes.statusText} - ${mText.substring(0, 200)}`;
           logDetails.results.push({ type: 'inventory', error: lastErrorMsg });
         }
       }
 
-      for (const v of variantsToUpdatePolicy) {
+      // 3. Push inventoryPolicy updates via GraphQL productVariantsBulkUpdate (grouped by productId)
+      for (const [productId, variants] of policyUpdatesByProduct.entries()) {
         try {
-          const pRes = await fetch(`https://${cleanDomain}/admin/api/2024-10/variants/${v.id}.json`, {
-            method: 'PUT',
-            headers: {
-              'Content-Type': 'application/json',
-              'X-Shopify-Access-Token': cleanToken,
-              'User-Agent': 'Mozilla/5.0'
-            },
-            body: JSON.stringify({
-              variant: {
-                id: v.id,
-                inventory_policy: v.policy
+          const policyMutation = {
+            query: `mutation productVariantsBulkUpdate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
+              productVariantsBulkUpdate(productId: $productId, variants: $variants) {
+                userErrors {
+                  field
+                  message
+                }
               }
-            })
-          });
-          if (!pRes.ok) {
-            const errT = await pRes.text();
-            console.warn(`Shopify variant policy update failed for ${v.id}:`, errT);
+            }`,
+            variables: { productId, variants }
+          };
+          const pRes = await shopifyGraphqlFetch(cleanDomain, db, settings, policyMutation);
+          const pText = await pRes.text();
+          if (pRes.ok) {
+            const pJson: any = JSON.parse(pText);
+            const pErrors = [
+              ...(pJson?.errors || []).map((e: any) => e.message),
+              ...(pJson?.data?.productVariantsBulkUpdate?.userErrors || []).map((e: any) => `${e.field?.join('.') || ''}: ${e.message}`)
+            ];
+            if (pErrors.length > 0) {
+              console.warn(`Shopify variant policy update errors for ${productId}:`, pErrors);
+              logDetails.results.push({ type: 'policy', productId, error: pErrors.join(' | ') });
+            } else {
+              logDetails.results.push({ type: 'policy', productId, success: true, count: variants.length });
+            }
+          } else {
+            console.warn(`Shopify variant policy HTTP error for ${productId}:`, pText);
+            logDetails.results.push({ type: 'policy', productId, error: `HTTP ${pRes.status} - ${pText.substring(0, 150)}` });
           }
         } catch (err: any) {
-          console.warn(`Shopify variant policy exception for ${v.id}:`, err);
+          console.warn(`Shopify variant policy exception for ${productId}:`, err);
+          logDetails.results.push({ type: 'policy', productId, error: err.message });
         }
       }
 
@@ -983,7 +1181,7 @@ async function pushShopifyInChunks(storeDomain: string, accessToken: string, loc
     await db.prepare("DELETE FROM sync_logs WHERE id NOT IN (SELECT id FROM sync_logs ORDER BY created_at DESC, id DESC LIMIT 100)").run();
   }
 
-  return { ok: successCount > 0, updated: successCount, hasError, error: lastErrorMsg };
+  return { ok: successCount > 0 || !hasError, updated: successCount, hasError, error: lastErrorMsg };
 }
 
 async function recordApiTestData(db: any, table: string, data: any) {
@@ -1221,7 +1419,7 @@ export default {
     const url = new URL(request.url);
 
     // 1. Auth Check for protected routes
-    const protectedRoutes = ['/admin', '/admin/settings', '/admin/logs', '/api/products', '/api/products/import', '/api/products/all', '/api/settings', '/api/mapping/search', '/api/products/map', '/api/sync-websites', '/api/logs'];
+    const protectedRoutes = ['/admin', '/admin/settings', '/admin/logs', '/api/products', '/api/products/import', '/api/products/all', '/api/settings', '/api/shopify/test-token', '/api/mapping/search', '/api/products/map', '/api/sync-websites', '/api/logs'];
     if (protectedRoutes.includes(url.pathname)) {
       const cookie = getCookie(request, 'admin_session');
       const secret = env.COOKIE_SECRET || 'dev-secret-key-change-me';
@@ -1344,18 +1542,18 @@ export default {
         const preGtoMap = new Map();
         let preShopify: any = null;
         if (target) {
-            if (target.cht_id) {
-               const { results } = await env.tile_db.prepare("SELECT CAST(cht_product_id AS INTEGER) as id, MAX(CAST(stock AS REAL)) as max_stock, MAX(backorder) as backorder, MAX(force_in_stock) as force_in_stock FROM products WHERE CAST(cht_product_id AS INTEGER) = ? GROUP BY CAST(cht_product_id AS INTEGER)").bind(target.cht_id).all();
-               results.forEach((r: any) => preChtMap.set(r.id, { stock: r.max_stock, backorder: r.backorder, force_in_stock: r.force_in_stock }));
-            }
-            if (target.gto_id) {
-               const { results } = await env.tile_db.prepare("SELECT CAST(gto_product_id AS INTEGER) as id, MAX(CAST(stock AS REAL)) as max_stock, MAX(backorder) as backorder, MAX(force_in_stock) as force_in_stock FROM products WHERE CAST(gto_product_id AS INTEGER) = ? GROUP BY CAST(gto_product_id AS INTEGER)").bind(target.gto_id).all();
-               results.forEach((r: any) => preGtoMap.set(r.id, { stock: r.max_stock, backorder: r.backorder, force_in_stock: r.force_in_stock }));
-            }
-            if (target.cht_shopify_product_id) {
-               const r = await env.tile_db.prepare("SELECT cht_shopify_product_id as id, cht_shopify_inventory_item_id as inventory_item_id, MAX(CAST(stock AS REAL)) as max_stock, MAX(backorder) as backorder, MAX(force_in_stock) as force_in_stock FROM products WHERE cht_shopify_product_id = ? GROUP BY cht_shopify_product_id").bind(target.cht_shopify_product_id).first();
-               if (r) preShopify = { id: r.id, inventory_item_id: r.inventory_item_id, stock: r.max_stock, backorder: r.backorder, force_in_stock: r.force_in_stock };
-            }
+          if (target.cht_id) {
+            const { results } = await env.tile_db.prepare("SELECT CAST(cht_product_id AS INTEGER) as id, MAX(CAST(stock AS REAL)) as max_stock, MAX(backorder) as backorder, MAX(force_in_stock) as force_in_stock FROM products WHERE CAST(cht_product_id AS INTEGER) = ? GROUP BY CAST(cht_product_id AS INTEGER)").bind(target.cht_id).all();
+            results.forEach((r: any) => preChtMap.set(r.id, { stock: r.max_stock, backorder: r.backorder, force_in_stock: r.force_in_stock }));
+          }
+          if (target.gto_id) {
+            const { results } = await env.tile_db.prepare("SELECT CAST(gto_product_id AS INTEGER) as id, MAX(CAST(stock AS REAL)) as max_stock, MAX(backorder) as backorder, MAX(force_in_stock) as force_in_stock FROM products WHERE CAST(gto_product_id AS INTEGER) = ? GROUP BY CAST(gto_product_id AS INTEGER)").bind(target.gto_id).all();
+            results.forEach((r: any) => preGtoMap.set(r.id, { stock: r.max_stock, backorder: r.backorder, force_in_stock: r.force_in_stock }));
+          }
+          if (target.cht_shopify_product_id) {
+            const r = await env.tile_db.prepare("SELECT cht_shopify_product_id as id, cht_shopify_inventory_item_id as inventory_item_id, MAX(CAST(stock AS REAL)) as max_stock, MAX(backorder) as backorder, MAX(force_in_stock) as force_in_stock FROM products WHERE cht_shopify_product_id = ? GROUP BY cht_shopify_product_id").bind(target.cht_shopify_product_id).first();
+            if (r) preShopify = { id: r.id, inventory_item_id: r.inventory_item_id, stock: r.max_stock, backorder: r.backorder, force_in_stock: r.force_in_stock };
+          }
         }
 
         // 2. Perform delete
@@ -1367,18 +1565,18 @@ export default {
         const postGtoMap = new Map();
         let postShopify: any = null;
         if (target) {
-            if (target.cht_id) {
-               const { results } = await env.tile_db.prepare("SELECT CAST(cht_product_id AS INTEGER) as id, MAX(CAST(stock AS REAL)) as max_stock, MAX(backorder) as backorder, MAX(force_in_stock) as force_in_stock FROM products WHERE CAST(cht_product_id AS INTEGER) = ? GROUP BY CAST(cht_product_id AS INTEGER)").bind(target.cht_id).all();
-               results.forEach((r: any) => postChtMap.set(r.id, { stock: r.max_stock, backorder: r.backorder, force_in_stock: r.force_in_stock }));
-            }
-            if (target.gto_id) {
-               const { results } = await env.tile_db.prepare("SELECT CAST(gto_product_id AS INTEGER) as id, MAX(CAST(stock AS REAL)) as max_stock, MAX(backorder) as backorder, MAX(force_in_stock) as force_in_stock FROM products WHERE CAST(gto_product_id AS INTEGER) = ? GROUP BY CAST(gto_product_id AS INTEGER)").bind(target.gto_id).all();
-               results.forEach((r: any) => postGtoMap.set(r.id, { stock: r.max_stock, backorder: r.backorder, force_in_stock: r.force_in_stock }));
-            }
-            if (target.cht_shopify_product_id) {
-               const r = await env.tile_db.prepare("SELECT cht_shopify_product_id as id, cht_shopify_inventory_item_id as inventory_item_id, MAX(CAST(stock AS REAL)) as max_stock, MAX(backorder) as backorder, MAX(force_in_stock) as force_in_stock FROM products WHERE cht_shopify_product_id = ? GROUP BY cht_shopify_product_id").bind(target.cht_shopify_product_id).first();
-               if (r) postShopify = { id: r.id, inventory_item_id: r.inventory_item_id, stock: r.max_stock, backorder: r.backorder, force_in_stock: r.force_in_stock };
-            }
+          if (target.cht_id) {
+            const { results } = await env.tile_db.prepare("SELECT CAST(cht_product_id AS INTEGER) as id, MAX(CAST(stock AS REAL)) as max_stock, MAX(backorder) as backorder, MAX(force_in_stock) as force_in_stock FROM products WHERE CAST(cht_product_id AS INTEGER) = ? GROUP BY CAST(cht_product_id AS INTEGER)").bind(target.cht_id).all();
+            results.forEach((r: any) => postChtMap.set(r.id, { stock: r.max_stock, backorder: r.backorder, force_in_stock: r.force_in_stock }));
+          }
+          if (target.gto_id) {
+            const { results } = await env.tile_db.prepare("SELECT CAST(gto_product_id AS INTEGER) as id, MAX(CAST(stock AS REAL)) as max_stock, MAX(backorder) as backorder, MAX(force_in_stock) as force_in_stock FROM products WHERE CAST(gto_product_id AS INTEGER) = ? GROUP BY CAST(gto_product_id AS INTEGER)").bind(target.gto_id).all();
+            results.forEach((r: any) => postGtoMap.set(r.id, { stock: r.max_stock, backorder: r.backorder, force_in_stock: r.force_in_stock }));
+          }
+          if (target.cht_shopify_product_id) {
+            const r = await env.tile_db.prepare("SELECT cht_shopify_product_id as id, cht_shopify_inventory_item_id as inventory_item_id, MAX(CAST(stock AS REAL)) as max_stock, MAX(backorder) as backorder, MAX(force_in_stock) as force_in_stock FROM products WHERE cht_shopify_product_id = ? GROUP BY cht_shopify_product_id").bind(target.cht_shopify_product_id).first();
+            if (r) postShopify = { id: r.id, inventory_item_id: r.inventory_item_id, stock: r.max_stock, backorder: r.backorder, force_in_stock: r.force_in_stock };
+          }
         }
 
         // 4. Compare and find what actually changed
@@ -1558,6 +1756,8 @@ export default {
         const { results } = await env.tile_db.prepare("SELECT * FROM settings").all();
         const settingsObj: any = {};
         results.forEach((r: any) => settingsObj[r.key] = r.value);
+        settingsObj.shopify_has_token = !!(settingsObj.shopify_access_token && String(settingsObj.shopify_access_token).trim());
+        delete settingsObj.shopify_access_token;
         return new Response(JSON.stringify({ data: settingsObj }), {
           headers: { 'Content-Type': 'application/json' }
         });
@@ -1570,17 +1770,77 @@ export default {
     if (request.method === 'POST' && url.pathname === '/api/settings') {
       try {
         const body: any = await request.json();
+
+        // Check if Shopify credentials changed so we can invalidate cached token
+        const { results: prevRows } = await env.tile_db.prepare(
+          "SELECT key, value FROM settings WHERE key IN ('shopify_store_domain', 'shopify_client_id', 'shopify_client_secret')"
+        ).all();
+        const prev: any = {};
+        prevRows.forEach((r: any) => prev[r.key] = (r.value || '').trim());
+
+        const shopifyCredsChanged =
+          (body.shopify_store_domain !== undefined && String(body.shopify_store_domain).trim() !== (prev.shopify_store_domain || '')) ||
+          (body.shopify_client_id !== undefined && String(body.shopify_client_id).trim() !== (prev.shopify_client_id || '')) ||
+          (body.shopify_client_secret !== undefined && String(body.shopify_client_secret).trim() !== (prev.shopify_client_secret || ''));
+
         const statements = [];
         const stmt = env.tile_db.prepare("INSERT INTO settings (key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = excluded.value");
+        const protectedKeys = new Set(['shopify_access_token', 'shopify_token_expires_at', 'shopify_has_token']);
         for (const [key, value] of Object.entries(body)) {
+          if (protectedKeys.has(key)) continue;
           statements.push(stmt.bind(key, value as string));
+        }
+        if (shopifyCredsChanged) {
+          statements.push(stmt.bind('shopify_access_token', ''));
+          statements.push(stmt.bind('shopify_token_expires_at', '0'));
         }
         if (statements.length > 0) {
           await env.tile_db.batch(statements);
         }
-        return new Response(JSON.stringify({ status: 'success' }), { headers: { 'Content-Type': 'application/json' } });
+        return new Response(JSON.stringify({ status: 'success', token_invalidated: shopifyCredsChanged }), { headers: { 'Content-Type': 'application/json' } });
       } catch (e: any) {
         return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+      }
+    }
+
+    if (request.method === 'POST' && url.pathname === '/api/shopify/test-token') {
+      try {
+        const body: any = await request.json().catch(() => ({}));
+        const { results: dbRows } = await env.tile_db.prepare(
+          "SELECT key, value FROM settings WHERE key IN ('shopify_store_domain', 'shopify_client_id', 'shopify_client_secret', 'shopify_location_id')"
+        ).all();
+        const mergedSettings: any = {};
+        dbRows.forEach((r: any) => mergedSettings[r.key] = r.value);
+
+        if (body.shopify_store_domain !== undefined) mergedSettings.shopify_store_domain = String(body.shopify_store_domain).trim();
+        if (body.shopify_client_id !== undefined) mergedSettings.shopify_client_id = String(body.shopify_client_id).trim();
+        if (body.shopify_client_secret !== undefined) mergedSettings.shopify_client_secret = String(body.shopify_client_secret).trim();
+        if (body.shopify_location_id !== undefined) mergedSettings.shopify_location_id = String(body.shopify_location_id).trim();
+
+        // Force-acquire a fresh token using client_credentials without persisting until verified
+        const tokenInfo = await getShopifyAccessToken(null, mergedSettings, true);
+
+        // Save verified Shopify settings + new token atomically
+        const stmt = env.tile_db.prepare("INSERT INTO settings (key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = excluded.value");
+        const saveStmts = [
+          stmt.bind('shopify_store_domain', mergedSettings.shopify_store_domain || ''),
+          stmt.bind('shopify_client_id', mergedSettings.shopify_client_id || ''),
+          stmt.bind('shopify_client_secret', mergedSettings.shopify_client_secret || ''),
+          stmt.bind('shopify_access_token', tokenInfo.token),
+          stmt.bind('shopify_token_expires_at', String(tokenInfo.expiresAt))
+        ];
+        if (mergedSettings.shopify_location_id !== undefined) {
+          saveStmts.push(stmt.bind('shopify_location_id', mergedSettings.shopify_location_id || ''));
+        }
+        await env.tile_db.batch(saveStmts);
+
+        return new Response(JSON.stringify({
+          status: 'success',
+          token_prefix: tokenInfo.token.slice(0, 10),
+          expires_at: tokenInfo.expiresAt
+        }), { headers: { 'Content-Type': 'application/json' } });
+      } catch (e: any) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 502, headers: { 'Content-Type': 'application/json' } });
       }
     }
 
@@ -1591,18 +1851,20 @@ export default {
 
       try {
         if (site === 'cht_shopify') {
-          const { results: settingsRows } = await env.tile_db.prepare("SELECT key, value FROM settings WHERE key IN ('shopify_store_domain', 'shopify_access_token')").all();
+          const { results: settingsRows } = await env.tile_db.prepare(
+            "SELECT key, value FROM settings WHERE key IN ('shopify_store_domain', 'shopify_client_id', 'shopify_client_secret', 'shopify_access_token', 'shopify_token_expires_at')"
+          ).all();
           const settings: any = {};
           settingsRows.forEach((r: any) => settings[r.key] = r.value);
 
-          if (!settings.shopify_store_domain || !settings.shopify_access_token) {
-            return new Response(JSON.stringify({ error: 'Shopify Store Domain or Access Token not configured in Settings' }), { status: 400 });
+          if (!settings.shopify_store_domain || !settings.shopify_client_id || !settings.shopify_client_secret) {
+            return new Response(JSON.stringify({ error: 'Shopify Store Domain, Client ID, or Client Secret not configured in Settings' }), {
+              status: 400,
+              headers: { 'Content-Type': 'application/json' }
+            });
           }
 
-          const rawDomain = (settings.shopify_store_domain || '').trim();
-          const cleanDomain = rawDomain.replace(/^https?:\/\//i, '').split('/')[0].trim();
-          const cleanToken = (settings.shopify_access_token || '').trim();
-
+          const cleanDomain = cleanShopifyDomain(settings.shopify_store_domain);
           const cleanKeyword = keyword.replace(/[:"\\]/g, ' ').trim();
           const terms = cleanKeyword.split(/\s+/).filter(Boolean);
           const queryParam = terms.length > 0 ? terms.map((t: string) => `${t}*`).join(' ') : '*';
@@ -1626,28 +1888,21 @@ export default {
             variables: { query: queryParam }
           });
 
-          let sRes = await fetch(`https://${cleanDomain}/admin/api/2024-10/graphql.json`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'X-Shopify-Access-Token': cleanToken,
-              'User-Agent': 'Mozilla/5.0'
-            },
-            body: JSON.stringify(buildGql(true))
-          });
+          let sRes: Response;
+          try {
+            sRes = await shopifyGraphqlFetch(cleanDomain, env.tile_db, settings, buildGql(true));
+          } catch (tokenErr: any) {
+            console.error("Shopify token/request error during search:", tokenErr);
+            return new Response(JSON.stringify({ error: tokenErr.message }), {
+              status: 502,
+              headers: { 'Content-Type': 'application/json' }
+            });
+          }
 
           // If querying inventoryItem resulted in 403 / Access Denied (user may only have read_products scope), retry without inventoryItem
           if (!sRes.ok && sRes.status === 403) {
             console.warn("Shopify returned 403 with inventoryItem, retrying without inventoryItem...");
-            const fallbackRes = await fetch(`https://${cleanDomain}/admin/api/2024-10/graphql.json`, {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                'X-Shopify-Access-Token': cleanToken,
-                'User-Agent': 'Mozilla/5.0'
-              },
-              body: JSON.stringify(buildGql(false))
-            });
+            const fallbackRes = await shopifyGraphqlFetch(cleanDomain, env.tile_db, settings, buildGql(false));
             if (fallbackRes.ok) {
               sRes = fallbackRes;
             }
@@ -1656,12 +1911,12 @@ export default {
           if (!sRes.ok) {
             const errText = await sRes.text();
             console.error("Shopify GraphQL search error:", sRes.status, errText);
-            return new Response(JSON.stringify({ 
+            return new Response(JSON.stringify({
               error: `Shopify API error: ${sRes.status} ${sRes.statusText}`,
-              details: errText 
-            }), { 
-              status: 502, 
-              headers: { 'Content-Type': 'application/json' } 
+              details: errText
+            }), {
+              status: 502,
+              headers: { 'Content-Type': 'application/json' }
             });
           }
 
@@ -1669,15 +1924,7 @@ export default {
           if (sJson.errors && sJson.errors.length > 0) {
             const isInvItemError = sJson.errors.some((e: any) => (e.message || '').includes('inventoryItem'));
             if (isInvItemError) {
-              const fallbackRes = await fetch(`https://${cleanDomain}/admin/api/2024-10/graphql.json`, {
-                method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                  'X-Shopify-Access-Token': cleanToken,
-                  'User-Agent': 'Mozilla/5.0'
-                },
-                body: JSON.stringify(buildGql(false))
-              });
+              const fallbackRes = await shopifyGraphqlFetch(cleanDomain, env.tile_db, settings, buildGql(false));
               if (fallbackRes.ok) {
                 const fbJson: any = await fallbackRes.json();
                 if (!fbJson.errors || fbJson.errors.length === 0) {
@@ -1690,12 +1937,12 @@ export default {
           if (sJson.errors && sJson.errors.length > 0) {
             console.error("Shopify GraphQL search errors:", sJson.errors);
             const msg = sJson.errors.map((e: any) => e.message).join('; ');
-            return new Response(JSON.stringify({ 
+            return new Response(JSON.stringify({
               error: `Shopify GraphQL error: ${msg}`,
-              details: sJson.errors 
-            }), { 
-              status: 502, 
-              headers: { 'Content-Type': 'application/json' } 
+              details: sJson.errors
+            }), {
+              status: 502,
+              headers: { 'Content-Type': 'application/json' }
             });
           }
 
@@ -1764,9 +2011,9 @@ export default {
         const gtoIds = new Set<number>();
         const shopifyIds = new Set<string>();
         if (current) {
-            if (current.cht_id) chtIds.add(current.cht_id);
-            if (current.gto_id) gtoIds.add(current.gto_id);
-            if (current.cht_shopify_product_id) shopifyIds.add(String(current.cht_shopify_product_id));
+          if (current.cht_id) chtIds.add(current.cht_id);
+          if (current.gto_id) gtoIds.add(current.gto_id);
+          if (current.cht_shopify_product_id) shopifyIds.add(String(current.cht_shopify_product_id));
         }
         if (body.cht_product_id) chtIds.add(Number(body.cht_product_id));
         if (body.gto_product_id) gtoIds.add(Number(body.gto_product_id));
@@ -1780,19 +2027,19 @@ export default {
         let preGtoMap = new Map();
         let preShopifyMap = new Map();
         if (chtIdsArr.length > 0) {
-            const ph = chtIdsArr.map(() => '?').join(',');
-            const { results } = await env.tile_db.prepare(`SELECT CAST(cht_product_id AS INTEGER) as id, MAX(CAST(stock AS REAL)) as max_stock, MAX(backorder) as backorder, MAX(force_in_stock) as force_in_stock FROM products WHERE CAST(cht_product_id AS INTEGER) IN (${ph}) GROUP BY CAST(cht_product_id AS INTEGER)`).bind(...chtIdsArr).all();
-            preChtMap = new Map(results.map((r: any) => [r.id, { stock: r.max_stock, backorder: r.backorder, force_in_stock: r.force_in_stock }]));
+          const ph = chtIdsArr.map(() => '?').join(',');
+          const { results } = await env.tile_db.prepare(`SELECT CAST(cht_product_id AS INTEGER) as id, MAX(CAST(stock AS REAL)) as max_stock, MAX(backorder) as backorder, MAX(force_in_stock) as force_in_stock FROM products WHERE CAST(cht_product_id AS INTEGER) IN (${ph}) GROUP BY CAST(cht_product_id AS INTEGER)`).bind(...chtIdsArr).all();
+          preChtMap = new Map(results.map((r: any) => [r.id, { stock: r.max_stock, backorder: r.backorder, force_in_stock: r.force_in_stock }]));
         }
         if (gtoIdsArr.length > 0) {
-            const ph = gtoIdsArr.map(() => '?').join(',');
-            const { results } = await env.tile_db.prepare(`SELECT CAST(gto_product_id AS INTEGER) as id, MAX(CAST(stock AS REAL)) as max_stock, MAX(backorder) as backorder, MAX(force_in_stock) as force_in_stock FROM products WHERE CAST(gto_product_id AS INTEGER) IN (${ph}) GROUP BY CAST(gto_product_id AS INTEGER)`).bind(...gtoIdsArr).all();
-            preGtoMap = new Map(results.map((r: any) => [r.id, { stock: r.max_stock, backorder: r.backorder, force_in_stock: r.force_in_stock }]));
+          const ph = gtoIdsArr.map(() => '?').join(',');
+          const { results } = await env.tile_db.prepare(`SELECT CAST(gto_product_id AS INTEGER) as id, MAX(CAST(stock AS REAL)) as max_stock, MAX(backorder) as backorder, MAX(force_in_stock) as force_in_stock FROM products WHERE CAST(gto_product_id AS INTEGER) IN (${ph}) GROUP BY CAST(gto_product_id AS INTEGER)`).bind(...gtoIdsArr).all();
+          preGtoMap = new Map(results.map((r: any) => [r.id, { stock: r.max_stock, backorder: r.backorder, force_in_stock: r.force_in_stock }]));
         }
         if (shopifyIdsArr.length > 0) {
-            const ph = shopifyIdsArr.map(() => '?').join(',');
-            const { results } = await env.tile_db.prepare(`SELECT cht_shopify_product_id as id, cht_shopify_inventory_item_id as inventory_item_id, MAX(CAST(stock AS REAL)) as max_stock, MAX(backorder) as backorder, MAX(force_in_stock) as force_in_stock FROM products WHERE cht_shopify_product_id IN (${ph}) GROUP BY cht_shopify_product_id`).bind(...shopifyIdsArr).all();
-            preShopifyMap = new Map(results.map((r: any) => [r.id, { stock: r.max_stock, backorder: r.backorder, force_in_stock: r.force_in_stock, inventory_item_id: r.inventory_item_id }]));
+          const ph = shopifyIdsArr.map(() => '?').join(',');
+          const { results } = await env.tile_db.prepare(`SELECT cht_shopify_product_id as id, cht_shopify_inventory_item_id as inventory_item_id, MAX(CAST(stock AS REAL)) as max_stock, MAX(backorder) as backorder, MAX(force_in_stock) as force_in_stock FROM products WHERE cht_shopify_product_id IN (${ph}) GROUP BY cht_shopify_product_id`).bind(...shopifyIdsArr).all();
+          preShopifyMap = new Map(results.map((r: any) => [r.id, { stock: r.max_stock, backorder: r.backorder, force_in_stock: r.force_in_stock, inventory_item_id: r.inventory_item_id }]));
         }
 
         // 2. Perform map update
@@ -1838,7 +2085,7 @@ export default {
             if (curRes.rows[0]?.cht_and_gto_stock_status) {
               try {
                 statusObj = { ...statusObj, ...JSON.parse(curRes.rows[0].cht_and_gto_stock_status as string) };
-              } catch (e) {}
+              } catch (e) { }
             }
             if (aggRes.rows[0]) {
               statusObj.max_stock = Number(aggRes.rows[0].max_stock) || 0;
@@ -1857,8 +2104,8 @@ export default {
                         cht_and_gto_stock_status = ? 
                     WHERE product_id = ?`,
               args: [
-                body.cht_shopify_product_id || null, 
-                body.cht_shopify_product_name || null, 
+                body.cht_shopify_product_id || null,
+                body.cht_shopify_product_name || null,
                 body.cht_shopify_inventory_item_id || null,
                 JSON.stringify(statusObj),
                 parentId
@@ -1884,19 +2131,19 @@ export default {
         let postGtoMap = new Map();
         let postShopifyMap = new Map();
         if (chtIdsArr.length > 0) {
-            const ph = chtIdsArr.map(() => '?').join(',');
-            const { results } = await env.tile_db.prepare(`SELECT CAST(cht_product_id AS INTEGER) as id, MAX(CAST(stock AS REAL)) as max_stock, MAX(backorder) as backorder, MAX(force_in_stock) as force_in_stock FROM products WHERE CAST(cht_product_id AS INTEGER) IN (${ph}) GROUP BY CAST(cht_product_id AS INTEGER)`).bind(...chtIdsArr).all();
-            postChtMap = new Map(results.map((r: any) => [r.id, { stock: r.max_stock, backorder: r.backorder, force_in_stock: r.force_in_stock }]));
+          const ph = chtIdsArr.map(() => '?').join(',');
+          const { results } = await env.tile_db.prepare(`SELECT CAST(cht_product_id AS INTEGER) as id, MAX(CAST(stock AS REAL)) as max_stock, MAX(backorder) as backorder, MAX(force_in_stock) as force_in_stock FROM products WHERE CAST(cht_product_id AS INTEGER) IN (${ph}) GROUP BY CAST(cht_product_id AS INTEGER)`).bind(...chtIdsArr).all();
+          postChtMap = new Map(results.map((r: any) => [r.id, { stock: r.max_stock, backorder: r.backorder, force_in_stock: r.force_in_stock }]));
         }
         if (gtoIdsArr.length > 0) {
-            const ph = gtoIdsArr.map(() => '?').join(',');
-            const { results } = await env.tile_db.prepare(`SELECT CAST(gto_product_id AS INTEGER) as id, MAX(CAST(stock AS REAL)) as max_stock, MAX(backorder) as backorder, MAX(force_in_stock) as force_in_stock FROM products WHERE CAST(gto_product_id AS INTEGER) IN (${ph}) GROUP BY CAST(gto_product_id AS INTEGER)`).bind(...gtoIdsArr).all();
-            postGtoMap = new Map(results.map((r: any) => [r.id, { stock: r.max_stock, backorder: r.backorder, force_in_stock: r.force_in_stock }]));
+          const ph = gtoIdsArr.map(() => '?').join(',');
+          const { results } = await env.tile_db.prepare(`SELECT CAST(gto_product_id AS INTEGER) as id, MAX(CAST(stock AS REAL)) as max_stock, MAX(backorder) as backorder, MAX(force_in_stock) as force_in_stock FROM products WHERE CAST(gto_product_id AS INTEGER) IN (${ph}) GROUP BY CAST(gto_product_id AS INTEGER)`).bind(...gtoIdsArr).all();
+          postGtoMap = new Map(results.map((r: any) => [r.id, { stock: r.max_stock, backorder: r.backorder, force_in_stock: r.force_in_stock }]));
         }
         if (shopifyIdsArr.length > 0) {
-            const ph = shopifyIdsArr.map(() => '?').join(',');
-            const { results } = await env.tile_db.prepare(`SELECT cht_shopify_product_id as id, cht_shopify_inventory_item_id as inventory_item_id, MAX(CAST(stock AS REAL)) as max_stock, MAX(backorder) as backorder, MAX(force_in_stock) as force_in_stock FROM products WHERE cht_shopify_product_id IN (${ph}) GROUP BY cht_shopify_product_id`).bind(...shopifyIdsArr).all();
-            postShopifyMap = new Map(results.map((r: any) => [r.id, { stock: r.max_stock, backorder: r.backorder, force_in_stock: r.force_in_stock, inventory_item_id: r.inventory_item_id }]));
+          const ph = shopifyIdsArr.map(() => '?').join(',');
+          const { results } = await env.tile_db.prepare(`SELECT cht_shopify_product_id as id, cht_shopify_inventory_item_id as inventory_item_id, MAX(CAST(stock AS REAL)) as max_stock, MAX(backorder) as backorder, MAX(force_in_stock) as force_in_stock FROM products WHERE cht_shopify_product_id IN (${ph}) GROUP BY cht_shopify_product_id`).bind(...shopifyIdsArr).all();
+          postShopifyMap = new Map(results.map((r: any) => [r.id, { stock: r.max_stock, backorder: r.backorder, force_in_stock: r.force_in_stock, inventory_item_id: r.inventory_item_id }]));
         }
 
         // 4. Compare and find what actually changed
@@ -1998,7 +2245,7 @@ export default {
         }
 
         // Sync CHT Shopify (Turso first with unit suffix/m2_per_box rules, fallback to D1 during transition)
-        if (settings.shopify_store_domain && settings.shopify_access_token && settings.shopify_location_id) {
+        if (settings.shopify_store_domain && settings.shopify_client_id && settings.shopify_client_secret && settings.shopify_location_id) {
           let payload: any[] = [];
 
           // 1. Try querying Turso products (using suffix and m2_per_box rules)
@@ -2022,7 +2269,7 @@ export default {
                   try {
                     const parsed = JSON.parse(r.cht_and_gto_stock_status as string);
                     if (parsed && parsed.force_in_stock) forceInStock = true;
-                  } catch (e) {}
+                  } catch (e) { }
                 }
                 return {
                   id: r.id,
@@ -2052,7 +2299,7 @@ export default {
           }
 
           if (payload.length > 0) {
-            const res = await pushShopifyInChunks(settings.shopify_store_domain, settings.shopify_access_token, settings.shopify_location_id, payload, env.tile_db);
+            const res = await pushShopifyInChunks(settings, payload, env.tile_db);
             resultsObj.cht_shopify = { status: res.hasError ? 207 : 200, ok: res.ok, updated: res.updated, error: res.error };
           } else {
             resultsObj.cht_shopify = { ok: false, reason: 'No mapped products for CHT Shopify' };
@@ -2103,43 +2350,43 @@ export default {
         const chtIds = new Set<number>();
         const gtoIds = new Set<number>();
         const shopifyIds = new Set<string>();
-        
+
         if (skus.length > 0) {
-           const chunkSize = 100;
-           for (let i = 0; i < skus.length; i += chunkSize) {
-              const chunk = skus.slice(i, i + chunkSize);
-              const placeholders = chunk.map(() => '?').join(',');
-              const affected = await env.tile_db.prepare(`SELECT CAST(cht_product_id AS INTEGER) as cht_id, CAST(gto_product_id AS INTEGER) as gto_id, cht_shopify_product_id as shopify_id FROM products WHERE sku IN (${placeholders})`).bind(...chunk).all();
-              affected.results.forEach((r: any) => {
-                 if (r.cht_id) chtIds.add(r.cht_id);
-                 if (r.gto_id) gtoIds.add(r.gto_id);
-                 if (r.shopify_id) shopifyIds.add(String(r.shopify_id));
-              });
-           }
+          const chunkSize = 100;
+          for (let i = 0; i < skus.length; i += chunkSize) {
+            const chunk = skus.slice(i, i + chunkSize);
+            const placeholders = chunk.map(() => '?').join(',');
+            const affected = await env.tile_db.prepare(`SELECT CAST(cht_product_id AS INTEGER) as cht_id, CAST(gto_product_id AS INTEGER) as gto_id, cht_shopify_product_id as shopify_id FROM products WHERE sku IN (${placeholders})`).bind(...chunk).all();
+            affected.results.forEach((r: any) => {
+              if (r.cht_id) chtIds.add(r.cht_id);
+              if (r.gto_id) gtoIds.add(r.gto_id);
+              if (r.shopify_id) shopifyIds.add(String(r.shopify_id));
+            });
+          }
         }
-        
+
         const chtIdsArr = Array.from(chtIds);
         const gtoIdsArr = Array.from(gtoIds);
         const shopifyIdsArr = Array.from(shopifyIds);
 
         const chunkFetch = async (ids: number[], field: string, targetMap: Map<any, any>) => {
-           for (let i = 0; i < ids.length; i += 100) {
-              const chunk = ids.slice(i, i + 100);
-              const ph = chunk.map(() => '?').join(',');
-              const { results } = await env.tile_db.prepare(`SELECT CAST(${field} AS INTEGER) as id, MAX(CAST(stock AS REAL)) as max_stock, MAX(backorder) as backorder, MAX(force_in_stock) as force_in_stock FROM products WHERE CAST(${field} AS INTEGER) IN (${ph}) GROUP BY CAST(${field} AS INTEGER)`).bind(...chunk).all();
-              results.forEach((r: any) => targetMap.set(r.id, { stock: r.max_stock, backorder: r.backorder, force_in_stock: r.force_in_stock }));
-           }
+          for (let i = 0; i < ids.length; i += 100) {
+            const chunk = ids.slice(i, i + 100);
+            const ph = chunk.map(() => '?').join(',');
+            const { results } = await env.tile_db.prepare(`SELECT CAST(${field} AS INTEGER) as id, MAX(CAST(stock AS REAL)) as max_stock, MAX(backorder) as backorder, MAX(force_in_stock) as force_in_stock FROM products WHERE CAST(${field} AS INTEGER) IN (${ph}) GROUP BY CAST(${field} AS INTEGER)`).bind(...chunk).all();
+            results.forEach((r: any) => targetMap.set(r.id, { stock: r.max_stock, backorder: r.backorder, force_in_stock: r.force_in_stock }));
+          }
         };
 
         const chunkFetchShopify = async (ids: string[], targetMap: Map<any, any>) => {
-           for (let i = 0; i < ids.length; i += 100) {
-              const chunk = ids.slice(i, i + 100);
-              const ph = chunk.map(() => '?').join(',');
-              const { results } = await env.tile_db.prepare(`SELECT cht_shopify_product_id as id, MAX(cht_shopify_inventory_item_id) as inventory_item_id, MAX(CAST(stock AS REAL)) as max_stock, MAX(backorder) as backorder, MAX(force_in_stock) as force_in_stock FROM products WHERE cht_shopify_product_id IN (${ph}) GROUP BY cht_shopify_product_id`).bind(...chunk).all();
-              results.forEach((r: any) => targetMap.set(r.id, { stock: r.max_stock, backorder: r.backorder, force_in_stock: r.force_in_stock, inventory_item_id: r.inventory_item_id }));
-           }
+          for (let i = 0; i < ids.length; i += 100) {
+            const chunk = ids.slice(i, i + 100);
+            const ph = chunk.map(() => '?').join(',');
+            const { results } = await env.tile_db.prepare(`SELECT cht_shopify_product_id as id, MAX(cht_shopify_inventory_item_id) as inventory_item_id, MAX(CAST(stock AS REAL)) as max_stock, MAX(backorder) as backorder, MAX(force_in_stock) as force_in_stock FROM products WHERE cht_shopify_product_id IN (${ph}) GROUP BY cht_shopify_product_id`).bind(...chunk).all();
+            results.forEach((r: any) => targetMap.set(r.id, { stock: r.max_stock, backorder: r.backorder, force_in_stock: r.force_in_stock, inventory_item_id: r.inventory_item_id }));
+          }
         };
-        
+
         // 1. Snapshot MAX stock BEFORE update
         let preChtMap = new Map();
         let preGtoMap = new Map();
@@ -2461,7 +2708,7 @@ export default {
       try {
         let data: any = await request.json();
         console.log(`Received data from ${url.pathname}:`, data);
-        
+
         const targetTable = url.pathname === '/proforma' ? 'pro_forma_invoce' : 'Invoice';
         if (env.api_test_db) {
           await recordApiTestData(env.api_test_db, targetTable, data);
@@ -2530,9 +2777,9 @@ export default {
       const res = await pushInChunks(settings.gto_endpoint, settings.gto_api_key, gtoUpdates, env.tile_db, 'gto');
       if (res.hasError) console.error("Queue GTO Push Error:", res.error);
     }
-    if (shopifyMap.size > 0 && settings.shopify_store_domain && settings.shopify_access_token && settings.shopify_location_id) {
+    if (shopifyMap.size > 0 && settings.shopify_store_domain && settings.shopify_client_id && settings.shopify_client_secret && settings.shopify_location_id) {
       const shopifyUpdates = Array.from(shopifyMap.values());
-      const res = await pushShopifyInChunks(settings.shopify_store_domain, settings.shopify_access_token, settings.shopify_location_id, shopifyUpdates, env.tile_db);
+      const res = await pushShopifyInChunks(settings, shopifyUpdates, env.tile_db);
       if (res.hasError) console.error("Queue Shopify Push Error:", res.error);
     }
   }
