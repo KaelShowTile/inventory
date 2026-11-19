@@ -905,6 +905,7 @@ async function getShopifyAccessToken(db: any, settings: any, forceRefresh: boole
     method: 'POST',
     headers: {
       'Content-Type': 'application/x-www-form-urlencoded',
+      'Accept': 'application/json',
       'User-Agent': 'Mozilla/5.0'
     },
     body: formBody.toString()
@@ -912,7 +913,14 @@ async function getShopifyAccessToken(db: any, settings: any, forceRefresh: boole
 
   const resText = await tokenRes.text();
   if (!tokenRes.ok) {
-    throw new Error(`Shopify OAuth token error (${tokenRes.status} ${tokenRes.statusText}): ${resText.substring(0, 300)}`);
+    let errDetail = resText.substring(0, 300);
+    try {
+      const errJson: any = JSON.parse(resText);
+      if (errJson.error || errJson.error_description) {
+        errDetail = `${errJson.error || ''} - ${errJson.error_description || ''}`.trim();
+      }
+    } catch (e) {}
+    throw new Error(`Shopify OAuth token error (${tokenRes.status} ${tokenRes.statusText}): ${errDetail}`);
   }
 
   let tokenJson: any;
